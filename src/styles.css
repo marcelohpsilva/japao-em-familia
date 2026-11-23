@@ -313,17 +313,24 @@ a { color: var(--azul); }
 /* ---------- Mapa ---------- */
 
 .trilha { list-style: none; margin: 0; padding: 0 0 0 10px; position: relative; }
-.trilha::before { content: ''; position: absolute; left: 34px; top: 10px; bottom: 10px; border-left: 5px dotted var(--navy); opacity: 0.35; }
+.trilha::before { content: ''; position: absolute; left: 39px; top: 10px; bottom: 10px; border-left: 5px dotted var(--navy); opacity: 0.35; }
 .fase button {
   position: relative; width: 100%; display: flex; align-items: center; gap: 12px; padding: 8px 4px; min-height: 64px;
   background: none; border: 0; text-align: left; cursor: pointer;
 }
 .fase-bolinha {
-  flex: none; width: 52px; height: 52px; border-radius: 50%; display: grid; place-items: center;
-  font-family: var(--f-titulo); font-weight: 800; font-size: 1.25rem; color: var(--branco);
+  position: relative; flex: none; width: 58px; height: 58px; border-radius: 50%;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1;
+  font-family: var(--f-titulo); font-weight: 800; color: var(--branco);
   background: linear-gradient(135deg, var(--mundo-a), var(--mundo-b)); border: var(--borda); box-shadow: var(--sombra-peq);
 }
-.fase-bonus { background: var(--amarelo); color: var(--navy); font-size: 1.6rem; }
+.fase-bonus { background: var(--amarelo); color: var(--navy); }
+.fase-dia { font-size: 1.35rem; }
+.fase-mes { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.fase-estrela {
+  position: absolute; top: -8px; right: -8px; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--vermelho); color: var(--amarelo); border: 2.5px solid var(--navy); font-size: 0.8rem;
+}
 .fase-hoje .fase-bolinha { animation: pulsar 1s ease-in-out infinite; outline: 4px solid var(--amarelo); }
 .fase-futura .fase-bolinha { filter: saturate(0.4); }
 .fase-texto { flex: 1; display: flex; flex-direction: column; min-width: 0; }

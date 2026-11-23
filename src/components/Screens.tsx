@@ -3,10 +3,10 @@ import type { Roteiro } from '../types';
 import { useStore } from '../lib/store';
 import { useUi, STATUS_PENDENTE, TEXTO_PAGAR, TEXTO_STATUS, ienes, ICONE_TIPO, linkTelefone } from '../lib/ui';
 import { baixarIcs, itensComLembrete } from '../lib/ics';
-import { NOME_MUNDO, KANJI_MUNDO, NUMERO_MUNDO, resumoDoDia, totalMoedas, fusoDoItem } from '../lib/game';
+import { NOME_MUNDO, KANJI_MUNDO, NUMERO_MUNDO, resumoDoDia, totalMoedas, fusoDoItem, cartoesDoDia } from '../lib/game';
 import { dateInTz, formatDia, TZ_JAPAO, zonedToEpoch } from '../lib/time';
 import { haQuanto } from '../lib/hooks';
-import { CLIENT_ID } from '../lib/google';
+import { CLIENT_ID, prepararLogin } from '../lib/google';
 import { Countdown } from './Countdown';
 import { DayView } from './DayView';
 import { Estrelas, Moeda, Musubi } from './Art';
@@ -109,30 +109,35 @@ function FimDeJogo({ roteiro }: { roteiro: Roteiro }) {
   );
 }
 
-// ---------- Mapa (versão simples; o mapa ilustrado chega na v2) ----------
+// ---------- Agenda: os dias da viagem, do primeiro ao último ----------
 
-export function Mapa({ roteiro, agoraMs, abrirDia }: { roteiro: Roteiro; agoraMs: number; abrirDia(d: string): void }) {
+const MES_CURTO = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+
+export function Agenda({ roteiro, agoraMs, abrirDia }: { roteiro: Roteiro; agoraMs: number; abrirDia(d: string): void }) {
   const { feitos } = useStore();
   const etapa = etapaAtual(roteiro, agoraMs);
   const hoje = etapa.tipo === 'durante' ? etapa.data : null;
   const ref = useRef<HTMLDivElement>(null);
-  // A trilha sobe de baixo para cima: abre rolada na fase de hoje (ou no começo).
+  // Durante a viagem, abre rolada no dia de hoje. Antes dela, começa do topo (primeiro dia).
   useEffect(() => {
-    const alvo = ref.current?.querySelector('.fase-hoje') ?? ref.current?.querySelector('.fase:last-child');
-    alvo?.scrollIntoView({ block: 'center' });
+    ref.current?.querySelector('.fase-hoje')?.scrollIntoView({ block: 'center' });
   }, []);
   return (
     <div className="mapa" ref={ref}>
-      <h1 className="tela-titulo">Japão em Família</h1>
-      <ol className="trilha" reversed>
-        {[...roteiro.dias].reverse().map((d) => {
+      <h1 className="tela-titulo">Agenda</h1>
+      <ol className="trilha">
+        {roteiro.dias.map((d) => {
           const r = resumoDoDia(roteiro, d, feitos);
           const futuro = hoje ? d.data > hoje : etapa.tipo === 'antes';
           const bonus = d.tipo_dia === 'parque';
           return (
             <li key={d.data} className={`fase mundo-${d.mundo} ${d.data === hoje ? 'fase-hoje' : ''} ${futuro ? 'fase-futura' : ''}`}>
               <button type="button" onClick={() => abrirDia(d.data)}>
-                <span className={`fase-bolinha ${bonus ? 'fase-bonus' : ''}`}>{bonus ? '★' : d.fase}</span>
+                <span className={`fase-bolinha ${bonus ? 'fase-bonus' : ''}`} aria-hidden="true">
+                  <span className="fase-dia">{Number(d.data.slice(8, 10))}</span>
+                  <span className="fase-mes">{MES_CURTO[Number(d.data.slice(5, 7)) - 1]}</span>
+                  {bonus && <span className="fase-estrela">★</span>}
+                </span>
                 <span className="fase-texto">
                   <span className="fase-mundo">
                     {NUMERO_MUNDO[d.mundo] ? `Mundo ${NUMERO_MUNDO[d.mundo]} · ` : ''}
@@ -154,9 +159,15 @@ export function Mapa({ roteiro, agoraMs, abrirDia }: { roteiro: Roteiro; agoraMs
 
 export function Pendencias({ roteiro, agoraMs }: { roteiro: Roteiro; agoraMs: number }) {
   const ui = useUi();
+  // Do começo ao fim da viagem: por dia e, dentro do dia, na mesma ordem da tela Hoje
+  // (horário real no fuso de cada item; itens sem hora na posição da planilha).
+  const posicao = new Map<string, number>();
+  for (const d of roteiro.dias) {
+    cartoesDoDia(roteiro, d.data).forEach((c, k) => c.itens.forEach((i) => posicao.set(i.id, k)));
+  }
   const pend = roteiro.itens
     .filter((i) => STATUS_PENDENTE.has(i.status))
-    .sort((a, b) => (a.data + (a.hora_inicio ?? '99')).localeCompare(b.data + (b.hora_inicio ?? '99')));
+    .sort((a, b) => a.data.localeCompare(b.data) || (posicao.get(a.id) ?? 0) - (posicao.get(b.id) ?? 0));
   const porData = new Map<string, typeof pend>();
   for (const i of pend) porData.set(i.data, [...(porData.get(i.data) ?? []), i]);
 
@@ -225,6 +236,7 @@ export function Ajustes() {
             {CLIENT_ID && <button type="button" className="btn btn-primario" onClick={s.entrarGoogle}>Entrar com Google</button>}
           </>
         ) : (
+          <>
           <div className="conta">
             {s.usuario?.foto && <img src={s.usuario.foto} alt="" width={40} height={40} referrerPolicy="no-referrer" />}
             <div>
@@ -233,6 +245,11 @@ export function Ajustes() {
               <small>{s.usuario?.email}</small>
             </div>
           </div>
+          <p className="legenda" style={{ textAlign: 'left' }}>
+            Você continua conectado neste aparelho até tocar em "Sair". O Google renova o acesso a cada hora;
+            o app faz isso sozinho no próximo toque, sem pedir senha.
+          </p>
+          </>
         )}
       </section>
 
@@ -297,6 +314,7 @@ export function Ajustes() {
 
 export function Entrada() {
   const s = useStore();
+  useEffect(() => prepararLogin(), []);
   return (
     <div className="entrada">
       <Musubi pose="jump" size={140} className="pula" />

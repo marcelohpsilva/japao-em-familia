@@ -88,19 +88,38 @@ function carregarGis(): Promise<Gis> {
 
 let tokenAtual: Token | null = null;
 
-export async function tokenValido(): Promise<string | null> {
+/** Lê do aparelho a chave salva (chamado ao abrir o app). */
+export async function carregarToken() {
   if (!tokenAtual) tokenAtual = (await kvGet<Token>('token')) ?? null;
+}
+
+/** Chave em memória, sem esperar nada (para não perder o "toque" do usuário no Safari). */
+export function tokenAgora(): string | null {
   if (tokenAtual && tokenAtual.expira - 60_000 > Date.now()) return tokenAtual.access_token;
   return null;
 }
 
-/**
- * Abre o login do Google. `silencioso` tenta renovar sem mostrar tela
- * (funciona se a pessoa já autorizou antes; senão dá erro e pedimos o toque).
- */
-export async function entrar(silencioso = false, dica?: string): Promise<string> {
-  if (!CLIENT_ID) throw new Error('Falta configurar o VITE_GOOGLE_CLIENT_ID.');
-  const gis = await carregarGis();
+/** Quando a chave atual vence (ms), ou null. */
+export function tokenExpiraEm(): number | null {
+  return tokenAtual?.expira ?? null;
+}
+
+export async function tokenValido(): Promise<string | null> {
+  await carregarToken();
+  return tokenAgora();
+}
+
+export function esquecerToken() {
+  tokenAtual = null;
+  void kvSet('token', null);
+}
+
+/** Baixa o script de login do Google antes, para o toque abrir a janela na hora. */
+export function prepararLogin() {
+  if (CLIENT_ID) carregarGis().catch(() => {});
+}
+
+function pedirToken(gis: Gis, silencioso: boolean, dica?: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const client = gis.accounts.oauth2.initTokenClient({
       client_id: CLIENT_ID,
@@ -116,8 +135,20 @@ export async function entrar(silencioso = false, dica?: string): Promise<string>
       },
       error_callback: (e) => reject(new Error(e.type === 'popup_closed' ? 'Login cancelado' : e.type)),
     });
-    client.requestAccessToken({ prompt: silencioso ? '' : undefined, login_hint: dica });
+    // Sem tela de escolher conta nem de permissões quando a pessoa já autorizou antes.
+    client.requestAccessToken({ prompt: silencioso ? 'none' : '', login_hint: dica });
   });
+}
+
+/**
+ * Abre o login do Google. Precisa ser chamado DIRETO dentro de um toque (sem esperar
+ * nada antes), senão o Safari bloqueia a janela. `silencioso` = renovar sem mostrar nada.
+ */
+export function entrar(silencioso = false, dica?: string): Promise<string> {
+  if (!CLIENT_ID) return Promise.reject(new Error('Falta configurar o VITE_GOOGLE_CLIENT_ID.'));
+  const g = (window as unknown as { google?: Gis }).google;
+  if (g?.accounts) return pedirToken(g, silencioso, dica);
+  return carregarGis().then((gis) => pedirToken(gis, silencioso, dica));
 }
 
 export async function sair() {

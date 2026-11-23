@@ -8,9 +8,9 @@ import { totalMoedas } from './lib/game';
 import { UiCtx, type Ui } from './lib/ui';
 import { Moeda, Musubi } from './components/Art';
 import { Comprovante, ItemSheet, StageIntro, Taxi } from './components/Overlays';
-import { Ajustes, Contatos, Entrada, etapaAtual, Hoje, Mapa, Pendencias, SemAcesso } from './components/Screens';
+import { Ajustes, Contatos, Entrada, etapaAtual, Hoje, Agenda, Pendencias, SemAcesso } from './components/Screens';
 
-type Aba = 'hoje' | 'mapa' | 'pendencias' | 'contatos' | 'ajustes';
+type Aba = 'hoje' | 'agenda' | 'pendencias' | 'contatos' | 'ajustes';
 
 interface MoedaVoando {
   id: number;
@@ -130,7 +130,7 @@ export default function App() {
             <AnimatePresence mode="wait">
               <motion.div key={aba + (dataEscolhida ?? '')} initial={{ opacity: 0, x: 24 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
                 {aba === 'hoje' && <Hoje roteiro={roteiro} agoraMs={agoraMs} dataEscolhida={dataEscolhida} setDataEscolhida={setDataEscolhida} />}
-                {aba === 'mapa' && <Mapa roteiro={roteiro} agoraMs={agoraMs} abrirDia={ui.irParaDia} />}
+                {aba === 'agenda' && <Agenda roteiro={roteiro} agoraMs={agoraMs} abrirDia={ui.irParaDia} />}
                 {aba === 'pendencias' && <Pendencias roteiro={roteiro} agoraMs={agoraMs} />}
                 {aba === 'contatos' && <Contatos roteiro={roteiro} />}
                 {aba === 'ajustes' && <Ajustes />}
@@ -142,7 +142,7 @@ export default function App() {
             {(
               [
                 ['hoje', '今日', 'Hoje'],
-                ['mapa', '🗾', 'Mapa'],
+                ['agenda', '🗓️', 'Agenda'],
                 ['pendencias', '📋', 'Pendências'],
                 ['contatos', '📞', 'Contatos'],
               ] as const

@@ -12,7 +12,11 @@ import {
   sair,
   SemAcessoError,
   TokenExpiradoError,
-  tokenValido,
+  carregarToken,
+  esquecerToken,
+  prepararLogin,
+  tokenAgora,
+  tokenExpiraEm,
   type ArquivoDrive,
   type Usuario,
 } from './google';
@@ -89,6 +93,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         kvGet<Record<string, number>>('feitos'),
         kvGet<Ajustes>('ajustes'),
         arquivosSalvos(),
+        carregarToken(),
       ]);
       const demoNaUrl = new URLSearchParams(location.search).has('demo');
       setE((s) => ({
@@ -149,7 +154,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const tratarErro = useCallback(
     async (err: unknown) => {
       if (err instanceof TokenExpiradoError) {
-        await kvSet('token', null);
+        esquecerToken();
         patch({ sync: 'precisa_login' });
       } else if (err instanceof SemAcessoError) {
         await kvSet('ids', null);
@@ -161,33 +166,79 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [patch],
   );
 
+  // Renovação da chave do Google (dura 1 h): no próximo toque na tela, sem escolher conta.
+  const armado = useRef(false);
+  const renovarNoToque = useCallback(() => {
+    if (armado.current || !navigator.onLine) return;
+    armado.current = true;
+    prepararLogin();
+    const aoTocar = () => {
+      armado.current = false;
+      if (tokenAgora() || estado.current.fonte !== 'google' || !navigator.onLine) return;
+      const pedido = entrar(true, estado.current.usuario?.email); // abre já, dentro do toque
+      patch({ sync: 'carregando' });
+      pedido
+        .then((token) => sincronizar(token))
+        .catch(() => patch({ sync: 'precisa_login' }));
+    };
+    window.addEventListener('pointerdown', aoTocar, { once: true, capture: true });
+  }, [patch, sincronizar]);
+
   const atualizar = useCallback(
     async (interativo = false) => {
-      if (estado.current.fonte !== 'google') return;
-      if (!navigator.onLine) return;
+      if (estado.current.fonte !== 'google' || !navigator.onLine) return;
+      const token = tokenAgora();
+      if (!token) {
+        if (!interativo) {
+          renovarNoToque();
+          return;
+        }
+        // Botão "Entrar de novo" / "Atualizar agora": abre a janela na hora (sem esperar nada antes).
+        const pedido = entrar(false, estado.current.usuario?.email);
+        patch({ sync: 'carregando' });
+        try {
+          await sincronizar(await pedido);
+        } catch (err) {
+          await tratarErro(err);
+        }
+        return;
+      }
       patch({ sync: 'carregando' });
       try {
-        let token = await tokenValido();
-        if (!token) {
-          if (!interativo) {
-            // Tenta renovar sem tela; se não der, pede o toque sem esconder os dados.
-            try {
-              token = await entrar(true, estado.current.usuario?.email);
-            } catch {
-              patch({ sync: 'precisa_login' });
-              return;
-            }
-          } else {
-            token = await entrar(false, estado.current.usuario?.email);
-          }
-        }
         await sincronizar(token);
       } catch (err) {
-        await tratarErro(err);
+        if (err instanceof TokenExpiradoError) {
+          esquecerToken();
+          patch({ sync: 'ocioso' });
+          renovarNoToque();
+        } else {
+          await tratarErro(err);
+        }
       }
     },
-    [patch, sincronizar, tratarErro],
+    [patch, sincronizar, tratarErro, renovarNoToque],
   );
+
+  // Ao voltar para o app (ou reconectar), atualiza se a última leitura tiver mais de 15 min.
+  useEffect(() => {
+    if (!e.pronto || e.fonte !== 'google') return;
+    prepararLogin();
+    const talvez = () => {
+      if (document.visibilityState !== 'visible') return;
+      const ultima = estado.current.atualizadoEm ?? 0;
+      if (Date.now() - ultima > 15 * 60000 && estado.current.sync !== 'carregando') void atualizar(false);
+    };
+    document.addEventListener('visibilitychange', talvez);
+    window.addEventListener('online', talvez);
+    // Perto de vencer a chave, já deixa a renovação pronta para o próximo toque.
+    const vence = tokenExpiraEm();
+    const t = vence ? setTimeout(renovarNoToque, Math.max(0, vence - Date.now() - 5 * 60000)) : undefined;
+    return () => {
+      document.removeEventListener('visibilitychange', talvez);
+      window.removeEventListener('online', talvez);
+      if (t) clearTimeout(t);
+    };
+  }, [e.pronto, e.fonte, e.atualizadoEm, atualizar, renovarNoToque]);
 
   // Ao abrir com internet, atualiza em segundo plano.
   const jaTentou = useRef(false);
@@ -206,9 +257,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         patch({ fonte: 'demo', roteiro: exemplo as Roteiro, sync: 'ocioso' });
       },
       async entrarGoogle() {
+        const pedido = entrar(false);
         patch({ sync: 'carregando', erro: undefined });
         try {
-          const token = await entrar(false);
+          const token = await pedido;
           await kvSet('fonte', 'google');
           patch({ fonte: 'google' });
           await sincronizar(token);
@@ -236,8 +288,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         if (!arq && !navigator.onLine) return { ok: false, motivo: 'Comprovante não achado (e sem internet para procurar de novo).' };
         if (!navigator.onLine) return { ok: false, motivo: 'Sem internet e este comprovante ainda não foi baixado.' };
         try {
-          let token = await tokenValido();
-          if (!token) token = await entrar(true, estado.current.usuario?.email).catch(() => entrar(false));
+          const token = tokenAgora();
+          if (!token) {
+            renovarNoToque();
+            return { ok: false, motivo: 'A conexão com o Google expirou. Toque em qualquer lugar para reconectar e abra o comprovante de novo.' };
+          }
           if (!arq) {
             // Pode ter sido enviado depois da última atualização: relê a pasta Comprovantes.
             const ids = await kvGet<{ comprovantes?: string }>('ids');
@@ -260,8 +315,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       async baixarTudo(progresso) {
         const s = estado.current;
         if (s.fonte !== 'google') return;
-        let token = await tokenValido();
-        if (!token) token = await entrar(false, s.usuario?.email);
+        const token = tokenAgora() ?? (await entrar(false, s.usuario?.email));
         const usados = new Set(
           (s.roteiro?.itens ?? []).flatMap((i) => (i.comprovante ?? '').split(';').map((x) => x.trim())).filter(Boolean),
         );
@@ -290,7 +344,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         });
       },
     }),
-    [e, patch, atualizar, sincronizar, tratarErro],
+    [e, patch, atualizar, sincronizar, tratarErro, renovarNoToque],
   );
 
   return <Ctx.Provider value={api}>{children}</Ctx.Provider>;
