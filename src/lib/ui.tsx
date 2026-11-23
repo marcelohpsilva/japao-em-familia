@@ -88,7 +88,7 @@ export async function copiar(texto: string): Promise<boolean> {
   }
 }
 
-/** "+81 6-4706-8800" → "tel:+81647068800". Vazio → null (esconde o botão). */
+/** "+81 0-0000-0000" → "tel:+810000000000". Vazio → null (esconde o botão). */
 export function linkTelefone(tel?: string): string | null {
   const limpo = (tel ?? '').replace(/[^\d+]/g, '');
   return limpo ? `tel:${limpo}` : null;
