@@ -1,0 +1,26 @@
+name: Desempacotar zip (temporario)
+on:
+  push:
+    paths: ['*.zip']
+permissions:
+  contents: write
+jobs:
+  unzip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Desempacotar e commitar
+        run: |
+          set -e
+          z=$(ls *.zip | head -1)
+          mkdir /tmp/x
+          unzip -q "$z" -d /tmp/x
+          src=$(find /tmp/x -mindepth 1 -maxdepth 1 -type d ! -name __MACOSX | head -1)
+          rm -rf "$src/.github"
+          cp -a "$src"/. .
+          git rm -q "$z"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Codigo do app (desempacotado do zip)"
+          git push
