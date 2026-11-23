@@ -36,6 +36,8 @@ export interface Dia {
 
 export interface Item {
   id: string;
+  /** posição da linha na aba Itens (a ordem lógica do dia) */
+  ordem?: number;
   data: string;
   hora_inicio?: string;
   hora_fim?: string;

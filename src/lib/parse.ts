@@ -100,8 +100,9 @@ export function parseRoteiro(abas: Record<string, Cell[][]>): Roteiro {
     status_dia: str(o.status_dia) as Dia['status_dia'],
   }));
 
-  const itens: Item[] = rowsToObjects(abas['Itens'] ?? []).map((o) => ({
+  const itens: Item[] = rowsToObjects(abas['Itens'] ?? []).map((o, ordem) => ({
     id: str(o.id),
+    ordem,
     data: normData(o.data),
     hora_inicio: normHora(o.hora_inicio) || undefined,
     hora_fim: normHora(o.hora_fim) || undefined,
@@ -136,6 +137,7 @@ export function parseRoteiro(abas: Record<string, Cell[][]>): Roteiro {
     notas: opt(o.notas),
   }));
 
-  dias.sort((a, b) => a.data.localeCompare(b.data));
-  return { viagem, dias, itens: itens.filter((i) => i.id && i.data), contatos };
+  const diasValidos = dias.filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d.data));
+  diasValidos.sort((a, b) => a.data.localeCompare(b.data));
+  return { viagem, dias: diasValidos, itens: itens.filter((i) => i.id && i.data), contatos };
 }

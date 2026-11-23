@@ -1,7 +1,7 @@
 import { motion, useMotionValue, useTransform, type PanInfo } from 'framer-motion';
 import type { Cartao } from '../lib/game';
 import { pontosDoCartao } from '../lib/game';
-import { ICONE_TIPO, STATUS_PENDENTE, TEXTO_PAGAR, TEXTO_STATUS, ienes, useUi } from '../lib/ui';
+import { ICONE_TIPO, STATUS_PENDENTE, TEXTO_PAGAR, TEXTO_STATUS, horaAConfirmar, ienes, nomeDoFuso, useUi } from '../lib/ui';
 import { formatDuracao } from '../lib/time';
 import type { Item } from '../types';
 
@@ -16,11 +16,15 @@ interface Props {
 }
 
 function Hora({ item }: { item: Item }) {
-  if (!item.hora_inicio) return <span className="hora hora-livre">a qualquer hora</span>;
+  if (!item.hora_inicio) {
+    return <span className="hora hora-livre">{horaAConfirmar(item) ? 'horário a confirmar' : 'a qualquer hora'}</span>;
+  }
+  const cidade = nomeDoFuso(item.fuso);
   return (
     <span className="hora">
       {item.hora_inicio}
       {item.hora_fim && <small>{item.hora_fim}</small>}
+      {cidade && <small className="hora-fuso">hora de {cidade}</small>}
     </span>
   );
 }

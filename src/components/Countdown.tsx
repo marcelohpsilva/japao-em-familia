@@ -1,7 +1,7 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import { useEffect, useRef } from 'react';
 import type { Roteiro } from '../types';
-import { dateInTz, daysBetween } from '../lib/time';
+import { dateInTz, daysBetween, formatDuracao, zonedToEpoch } from '../lib/time';
 import { CenaContagem, Musubi } from './Art';
 import { soltarConfete } from '../lib/fx';
 import { useStore } from '../lib/store';
@@ -36,6 +36,9 @@ export function Countdown({ roteiro, agoraMs }: { roteiro: Roteiro; agoraMs: num
   const hoje = dateInTz(agoraMs, v.embarque_fuso);
   const faltam = daysBetween(hoje, v.embarque_data);
   const ehHoje = faltam === 0;
+  // Saída de casa: embarque_data + embarque_hora no fuso do embarque.
+  const saida = v.embarque_hora ? zonedToEpoch(v.embarque_data, v.embarque_hora, v.embarque_fuso) : null;
+  const minParaSair = saida ? Math.round((saida - agoraMs) / 60000) : null;
   const confetiFeito = useRef(false);
 
   useEffect(() => {
@@ -56,7 +59,8 @@ export function Countdown({ roteiro, agoraMs }: { roteiro: Roteiro; agoraMs: num
           <>
             <p className="contagem-grande">É hoje!</p>
             <p className="contagem-sub">
-              Saída para o aeroporto às {v.embarque_hora.replace(':', 'h')}
+              {v.embarque_hora ? `Saída para o aeroporto às ${v.embarque_hora.replace(':', 'h')}` : 'Boa viagem!'}
+              {minParaSair !== null && minParaSair > 0 && ` · em ${formatDuracao(minParaSair)}`}
             </p>
           </>
         ) : (

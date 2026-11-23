@@ -116,12 +116,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const sincronizar = useCallback(
     async (token: string) => {
-      const ids = await acharIds(token);
-      const [roteiro, usuario, comprovantes] = await Promise.all([
-        lerRoteiro(token, ids),
-        estado.current.usuario ? Promise.resolve(estado.current.usuario) : lerUsuario(token),
-        ids.comprovantes ? listarComprovantes(token, ids.comprovantes) : Promise.resolve({}),
-      ]);
+      const ler = async () => {
+        const ids = await acharIds(token);
+        return Promise.all([
+          lerRoteiro(token, ids),
+          estado.current.usuario ? Promise.resolve(estado.current.usuario) : lerUsuario(token),
+          ids.comprovantes ? listarComprovantes(token, ids.comprovantes) : Promise.resolve({}),
+        ]);
+      };
+      let resultado;
+      try {
+        resultado = await ler();
+      } catch (err) {
+        // A planilha ou a pasta pode ter sido recriada: esquece os IDs guardados e procura de novo pelo nome.
+        if (!(err instanceof SemAcessoError)) throw err;
+        await kvSet('ids', null);
+        resultado = await ler();
+      }
+      const [roteiro, usuario, comprovantes] = resultado;
       const agoraMs = Date.now();
       await Promise.all([
         kvSet('roteiro', roteiro),
@@ -220,12 +232,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         if (estado.current.fonte === 'demo') {
           return { ok: false, motivo: 'No modo exemplo não há comprovantes. Entre com o Google para ver os reais.' };
         }
-        const arq = estado.current.comprovantes[nome];
-        if (!arq) return { ok: false, motivo: 'Comprovante não achado na pasta Comprovantes.' };
+        let arq = estado.current.comprovantes[nome];
+        if (!arq && !navigator.onLine) return { ok: false, motivo: 'Comprovante não achado (e sem internet para procurar de novo).' };
         if (!navigator.onLine) return { ok: false, motivo: 'Sem internet e este comprovante ainda não foi baixado.' };
         try {
           let token = await tokenValido();
           if (!token) token = await entrar(true, estado.current.usuario?.email).catch(() => entrar(false));
+          if (!arq) {
+            // Pode ter sido enviado depois da última atualização: relê a pasta Comprovantes.
+            const ids = await kvGet<{ comprovantes?: string }>('ids');
+            if (ids?.comprovantes) {
+              const comprovantes = await listarComprovantes(token, ids.comprovantes);
+              await kvSet('comprovantes', comprovantes);
+              setE((x) => ({ ...x, comprovantes }));
+              arq = comprovantes[nome];
+            }
+          }
+          if (!arq) return { ok: false, motivo: `Comprovante não achado na pasta Comprovantes. Confira se o arquivo tem exatamente este nome: ${nome}` };
           const blob = await baixarArquivo(token, arq.id);
           await arquivoSet(nome, blob, arq.mimeType);
           setE((s) => ({ ...s, baixados: new Set([...s.baixados, nome]) }));

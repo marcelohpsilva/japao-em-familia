@@ -368,6 +368,15 @@
       "hora_fim": "20:00"
     },
     {
+      "id": "20261230-10",
+      "data": "2026-12-30",
+      "tipo": "compras",
+      "titulo": "Comprar capa de chuva na loja do parque",
+      "status": "ideia",
+      "critico": false,
+      "notas": "horário a confirmar (só se chover)"
+    },
+    {
       "id": "20261230-04",
       "data": "2026-12-30",
       "tipo": "atracao",
@@ -675,14 +684,42 @@
     {
       "id": "20270112-03",
       "data": "2027-01-12",
+      "hora_inicio": "14:00",
+      "fuso": "Asia/Tokyo",
       "tipo": "voo",
-      "titulo": "Voo de volta (exemplo)",
+      "titulo": "Voo para Seul (exemplo)",
       "status": "comprado",
       "critico": true,
       "lembrete_min": 120,
-      "notas": "Chega no mesmo dia, horário local de casa.",
-      "hora_inicio": "14:00",
-      "hora_fim": "16:40"
+      "comprovante": "2026-12-28_voo_ida.pdf",
+      "notas": "Chega em Seul às 16:30."
+    },
+    {
+      "id": "20270112-04",
+      "data": "2027-01-12",
+      "hora_inicio": "22:55",
+      "fuso": "Asia/Seoul",
+      "tipo": "voo",
+      "titulo": "Voo para casa (exemplo)",
+      "status": "comprado",
+      "critico": true,
+      "lembrete_min": 90,
+      "comprovante": "2026-12-28_voo_ida.pdf",
+      "notas": "Chega às 16:40 de 12/01 em Vancouver."
+    },
+    {
+      "id": "20270112-05",
+      "data": "2027-01-12",
+      "hora_inicio": "17:30",
+      "fuso": "America/Vancouver",
+      "tipo": "transporte",
+      "titulo": "Táxi do aeroporto para casa",
+      "status": "a_reservar",
+      "critico": false,
+      "linha": "Táxi (exemplo)",
+      "de": "Aeroporto",
+      "para": "Casa",
+      "como_pagar": "cartao"
     }
   ],
   "contatos": [
@@ -711,6 +748,17 @@
       "nome": "Ambulância e bombeiros",
       "tipo": "emergencia",
       "telefone": "119"
+    },
+    {
+      "nome": "Companhia aérea (exemplo)",
+      "tipo": "transporte",
+      "notas": "Telefone a confirmar"
+    },
+    {
+      "nome": "Agência de viagem (exemplo)",
+      "tipo": "servico",
+      "telefone": "+1 000-000-0000",
+      "notas": "Telefone fictício"
     }
   ]
 }

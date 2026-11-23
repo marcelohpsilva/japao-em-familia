@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Roteiro } from '../types';
 import { useStore } from '../lib/store';
-import { useUi, STATUS_PENDENTE, TEXTO_PAGAR, TEXTO_STATUS, ienes, ICONE_TIPO } from '../lib/ui';
+import { useUi, STATUS_PENDENTE, TEXTO_PAGAR, TEXTO_STATUS, ienes, ICONE_TIPO, linkTelefone } from '../lib/ui';
+import { baixarIcs, itensComLembrete } from '../lib/ics';
 import { NOME_MUNDO, KANJI_MUNDO, NUMERO_MUNDO, resumoDoDia, totalMoedas, fusoDoItem } from '../lib/game';
 import { dateInTz, formatDia, TZ_JAPAO, zonedToEpoch } from '../lib/time';
 import { haQuanto } from '../lib/hooks';
@@ -162,6 +163,7 @@ export function Pendencias({ roteiro, agoraMs }: { roteiro: Roteiro; agoraMs: nu
   return (
     <div className="pendencias">
       <h1 className="tela-titulo">Pendências</h1>
+      <BlocoLembretes roteiro={roteiro} />
       {pend.length === 0 && (
         <div className="vazio">
           <Musubi pose="jump" />
@@ -324,6 +326,78 @@ export function SemAcesso() {
       <p>Esta conta não consegue abrir a pasta Viagem-Japao. Peça para quem organizou a viagem compartilhar com você e tente de novo.</p>
       <button type="button" className="btn btn-primario" onClick={() => s.atualizar(true)}>Tentar de novo</button>
       <button type="button" className="btn" onClick={s.sairEApagar}>Sair</button>
+    </div>
+  );
+}
+
+// ---------- Lembretes no celular ----------
+
+function BlocoLembretes({ roteiro }: { roteiro: Roteiro }) {
+  const n = itensComLembrete(roteiro).length;
+  if (!n) return null;
+  return (
+    <section className="cartao-toy bloco">
+      <h2 className="secao-titulo">⏰ Lembretes no celular</h2>
+      <p>
+        Baixa um arquivo com os {n} itens importantes, cada um com alarme antes da hora. Abra o arquivo e toque em
+        "Adicionar todos". O alarme toca mesmo sem internet e com o app fechado.
+      </p>
+      <button type="button" className="btn" onClick={() => baixarIcs(roteiro)}>
+        Adicionar lembretes ao celular
+      </button>
+      <p className="legenda">Se o roteiro mudar, baixe de novo: os eventos são atualizados, não duplicados.</p>
+    </section>
+  );
+}
+
+// ---------- Contatos ----------
+
+const ICONE_CONTATO: Record<string, string> = { hotel: '🏨', emergencia: '🚨', transporte: '✈️', servico: '🧳' };
+const ORDEM_CONTATO = ['emergencia', 'hotel', 'transporte', 'servico'];
+
+export function Contatos({ roteiro }: { roteiro: Roteiro }) {
+  const ui = useUi();
+  const lista = [...roteiro.contatos].sort(
+    (a, b) => (ORDEM_CONTATO.indexOf(a.tipo) + 9) % 9 - (ORDEM_CONTATO.indexOf(b.tipo) + 9) % 9,
+  );
+  return (
+    <div className="contatos">
+      <h1 className="tela-titulo">Contatos</h1>
+      {lista.length === 0 && (
+        <div className="vazio">
+          <Musubi pose="idle" />
+          <p>Nenhum contato na planilha ainda.</p>
+        </div>
+      )}
+      <ul className="lista-contatos">
+        {lista.map((c, i) => {
+          const tel = linkTelefone(c.telefone);
+          return (
+            <li key={`${c.nome}-${i}`} className={`cartao-toy contato contato-${c.tipo}`}>
+              <p className="contato-nome">
+                <span aria-hidden="true">{ICONE_CONTATO[c.tipo] ?? '📌'}</span> {c.nome}
+              </p>
+              {c.notas && <p className="contato-notas">{c.notas}</p>}
+              <div className="item-botoes contato-botoes">
+                {tel && (
+                  <a className="btn-mini btn-ligar" href={tel}>
+                    📞 {c.telefone}
+                  </a>
+                )}
+                {c.link_maps && (
+                  <a className="btn-mini" href={c.link_maps} target="_blank" rel="noreferrer">📍 Maps</a>
+                )}
+                {c.endereco_jp && (
+                  <button type="button" className="btn-mini" onClick={() => ui.abrirTaxi({ titulo: c.nome, endereco_jp: c.endereco_jp })}>
+                    🚕 Mostrar ao taxista
+                  </button>
+                )}
+              </div>
+              {!tel && c.tipo !== 'hotel' && <p className="legenda contato-sem-tel">Telefone ainda não confirmado</p>}
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }

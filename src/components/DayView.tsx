@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Roteiro } from '../types';
 import { cartoesDoDia, KANJI_MUNDO, NOME_MUNDO, PONTOS_DIA_CRITICOS, pontosDoCartao, resumoDoDia, rotuloFase, type Cartao } from '../lib/game';
 import { formatDia } from '../lib/time';
@@ -19,47 +19,58 @@ interface Props {
   onMudarDia(data: string): void;
 }
 
-export function DayView({ roteiro, data, agoraMs, ehHoje, onMudarDia }: Props) {
+export function DayView(props: Props) {
+  const idx = props.roteiro.dias.findIndex((d) => d.data === props.data);
+  if (idx < 0) {
+    return (
+      <div className="vazio">
+        <Musubi pose="sleep" />
+        <p>Nenhum dia {formatDia(props.data)} no roteiro.</p>
+      </div>
+    );
+  }
+  return <DiaDoRoteiro {...props} idx={idx} />;
+}
+
+function DiaDoRoteiro({ roteiro, data, agoraMs, ehHoje, onMudarDia, idx }: Props & { idx: number }) {
   const { feitos, marcar, ajustes } = useStore();
   const ui = useUi();
   const [expandido, setExpandido] = useState(false);
   const [faseConcluida, setFaseConcluida] = useState<number | null>(null);
+  const vibrados = useRef(new Set<string>());
 
-  const idx = roteiro.dias.findIndex((d) => d.data === data);
   const dia = roteiro.dias[idx];
   const cartoes = useMemo(() => cartoesDoDia(roteiro, data), [roteiro, data]);
-
-  if (!dia) {
-    return (
-      <div className="vazio">
-        <Musubi pose="sleep" />
-        <p>Nenhum dia {formatDia(data)} no roteiro.</p>
-      </div>
-    );
-  }
 
   const resumo = resumoDoDia(roteiro, dia, feitos);
 
   // Classifica os cartões pelo relógio (só no dia de hoje).
-  const comHora = cartoes.filter((c) => c.inicio !== undefined);
-  const semHora = cartoes.filter((c) => c.inicio === undefined);
+  // Itens sem hora nunca são recolhidos: continuam na posição da planilha.
   const passados: Cartao[] = [];
   const restantes: Cartao[] = [];
-  for (const c of comHora) {
-    if (ehHoje && c.fim! <= agoraMs) passados.push(c);
+  for (const c of cartoes) {
+    if (ehHoje && c.fim !== undefined && c.fim <= agoraMs) passados.push(c);
     else restantes.push(c);
   }
-  const atual = ehHoje ? restantes.find((c) => c.inicio! <= agoraMs && agoraMs < c.fim!) : undefined;
-  const proximo = ehHoje ? restantes.find((c) => c.inicio! > agoraMs) : undefined;
+  const comHora = restantes.filter((c) => c.inicio !== undefined);
+  const atual = ehHoje ? comHora.find((c) => c.inicio! <= agoraMs && agoraMs < c.fim!) : undefined;
+  const proximo = ehHoje ? comHora.find((c) => c.inicio! > agoraMs) : undefined;
 
   // Lembrete dentro do app: item crítico começando dentro do lembrete_min.
   const lembrete = ehHoje
-    ? restantes.find((c) => {
+    ? comHora.find((c) => {
         if (!c.critico || feitos[c.chave]) return false;
         const min = (c.inicio! - agoraMs) / 60000;
         return min > 0 && min <= (c.principal.lembrete_min ?? 30);
       })
     : undefined;
+
+  useEffect(() => {
+    if (lembrete && !vibrados.current.has(lembrete.chave)) {
+      vibrados.current.add(lembrete.chave);
+      vibrar(200);
+    }
+  }, [lembrete]);
 
   const momento = (c: Cartao): Momento => {
     if (c.inicio === undefined) return 'livre';
@@ -180,7 +191,7 @@ export function DayView({ roteiro, data, agoraMs, ehHoje, onMudarDia }: Props) {
           </>
         )}
         {restantes.map(renderCartao)}
-        {ehHoje && restantes.length === 0 && passados.length > 0 && (
+        {ehHoje && comHora.length === 0 && passados.length > 0 && (
           <div className="vazio">
             <Musubi pose="sleep" size={88} />
             <p>Nada mais hoje. Bom descanso!</p>
@@ -191,12 +202,6 @@ export function DayView({ roteiro, data, agoraMs, ehHoje, onMudarDia }: Props) {
             <Musubi pose="idle" size={88} />
             <p>{dia.resumo || 'Sem itens neste dia.'}</p>
           </div>
-        )}
-        {semHora.length > 0 && (
-          <>
-            <h2 className="secao-titulo">A qualquer hora</h2>
-            {semHora.map(renderCartao)}
-          </>
         )}
         {resumo.criticos > 0 && (
           <p className="legenda">

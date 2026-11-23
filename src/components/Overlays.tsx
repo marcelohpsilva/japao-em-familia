@@ -2,7 +2,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { useEffect, useState } from 'react';
 import type { Dia, Item } from '../types';
 import { useStore, type ResultadoComprovante } from '../lib/store';
-import { ICONE_TIPO, TEXTO_PAGAR, TEXTO_STATUS, ienes, useUi } from '../lib/ui';
+import { ICONE_TIPO, TEXTO_PAGAR, TEXTO_STATUS, copiar, horaAConfirmar, ienes, nomeDoFuso, useUi } from '../lib/ui';
 import { KANJI_MUNDO, rotuloFase, PONTOS_DIA_CRITICOS } from '../lib/game';
 import { formatDuracao } from '../lib/time';
 import { Estrelas, Musubi } from './Art';
@@ -40,6 +40,24 @@ export function Folha({ aberta, onFechar, titulo, children }: { aberta: boolean;
   );
 }
 
+/** Copia o endereço em japonês (para colar no app de táxi ou mandar por mensagem). */
+export function BotaoCopiar({ texto }: { texto: string }) {
+  const [estado, setEstado] = useState<'' | 'ok' | 'erro'>('');
+  return (
+    <button
+      type="button"
+      className="btn"
+      onClick={async (e) => {
+        e.stopPropagation();
+        setEstado((await copiar(texto)) ? 'ok' : 'erro');
+        setTimeout(() => setEstado(''), 2000);
+      }}
+    >
+      {estado === 'ok' ? '✓ Endereço copiado' : estado === 'erro' ? 'Não deu para copiar' : '📋 Copiar endereço'}
+    </button>
+  );
+}
+
 export function ItemSheet({ item, onFechar }: { item: Item | null; onFechar(): void }) {
   const ui = useUi();
   return (
@@ -49,8 +67,10 @@ export function ItemSheet({ item, onFechar }: { item: Item | null; onFechar(): v
           <p className="detalhe-tipo">{ICONE_TIPO[item.tipo]} {item.tipo}</p>
           <h2>{item.titulo}</h2>
           <p className="detalhe-hora">
-            {item.hora_inicio ? `${item.hora_inicio}${item.hora_fim ? ` – ${item.hora_fim}` : ''}` : 'A qualquer hora'}
-            {item.fuso && item.fuso !== 'Asia/Tokyo' ? ` (${item.fuso.split('/')[1].replace('_', ' ')})` : ''}
+            {item.hora_inicio
+              ? `${item.hora_inicio}${item.hora_fim ? ` – ${item.hora_fim}` : ''}`
+              : horaAConfirmar(item) ? 'Horário a confirmar' : 'A qualquer hora'}
+            {nomeDoFuso(item.fuso) ? ` (hora de ${nomeDoFuso(item.fuso)})` : ''}
           </p>
           {item.critico && <p className="selo selo-critico">⚠️ Importante{item.lembrete_min ? ` · lembrete ${item.lembrete_min} min antes` : ''}</p>}
           <dl className="detalhe-lista">
@@ -78,7 +98,10 @@ export function ItemSheet({ item, onFechar }: { item: Item | null; onFechar(): v
               <a className="btn" href={item.link_maps} target="_blank" rel="noreferrer">📍 Abrir no Maps</a>
             )}
             {item.endereco_jp && (
-              <button type="button" className="btn" onClick={() => ui.abrirTaxi(item)}>🚕 Mostrar ao taxista</button>
+              <>
+                <button type="button" className="btn" onClick={() => ui.abrirTaxi(item)}>🚕 Mostrar ao taxista</button>
+                <BotaoCopiar texto={item.endereco_jp} />
+              </>
             )}
           </div>
         </div>
@@ -96,6 +119,7 @@ export function Taxi({ alvo, onFechar }: { alvo: { titulo: string; endereco_jp?:
           <p className="taxi-pedido" lang="ja">ここへ行ってください</p>
           <p className="taxi-endereco" lang="ja">{alvo.endereco_jp}</p>
           <p className="taxi-local">{alvo.local ?? alvo.titulo}</p>
+          {alvo.endereco_jp && <BotaoCopiar texto={alvo.endereco_jp} />}
           <button type="button" className="btn" onClick={onFechar}>Fechar</button>
         </motion.div>
       )}

@@ -42,8 +42,9 @@ export function cartoesDoDia(roteiro: Roteiro, data: string): Cartao[] {
     }
   }
   for (const c of cartoes) {
-    const it = c.principal;
     c.critico = c.itens.some((i) => i.critico);
+    // Num grupo de opções, o horário vem da primeira opção que tiver hora.
+    const it = c.itens.find((i) => i.hora_inicio) ?? c.principal;
     if (it.hora_inicio) {
       const tz = fusoDoItem(it, roteiro);
       c.inicio = zonedToEpoch(it.data, it.hora_inicio, tz);
@@ -56,13 +57,19 @@ export function cartoesDoDia(roteiro: Roteiro, data: string): Cartao[] {
       }
     }
   }
-  cartoes.sort((a, b) => {
-    if (a.inicio === undefined && b.inicio === undefined) return 0;
-    if (a.inicio === undefined) return 1;
-    if (b.inicio === undefined) return -1;
-    return a.inicio - b.inicio || a.chave.localeCompare(b.chave);
-  });
-  return cartoes;
+  // Ordenação: itens com hora pelo instante absoluto (cada um no seu fuso).
+  // Itens sem hora ficam "presos" ao item com hora que vem antes deles na planilha,
+  // mantendo a ordem das linhas. Empates seguem a ordem da planilha (estável).
+  const ordemPlanilha = (c: Cartao) => c.principal.ordem ?? 0;
+  const porLinha = [...cartoes].sort((a, b) => ordemPlanilha(a) - ordemPlanilha(b));
+  const chaveTempo = new Map<Cartao, number>();
+  let ultimo = Number.NEGATIVE_INFINITY;
+  for (const c of porLinha) {
+    if (c.inicio !== undefined) ultimo = c.inicio;
+    chaveTempo.set(c, ultimo);
+  }
+  // Itens sem hora no começo do dia ficam antes do primeiro item com hora.
+  return porLinha.sort((a, b) => chaveTempo.get(a)! - chaveTempo.get(b)! || ordemPlanilha(a) - ordemPlanilha(b));
 }
 
 export function pontosDoCartao(c: Cartao) {

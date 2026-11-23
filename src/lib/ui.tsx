@@ -54,3 +54,42 @@ export function ienes(n?: number) {
   if (n === undefined) return '';
   return `¥ ${n.toLocaleString('pt-BR')}`;
 }
+
+/** Hora local de cada lugar: só avisa a cidade quando não é o Japão. */
+export function nomeDoFuso(fuso?: string): string | null {
+  if (!fuso || fuso === 'Asia/Tokyo') return null;
+  const nomes: Record<string, string> = { 'Asia/Seoul': 'Seul', 'America/Vancouver': 'Vancouver' };
+  return nomes[fuso] ?? fuso.split('/').pop()!.replace(/_/g, ' ');
+}
+
+export function horaAConfirmar(item: { notas?: string }): boolean {
+  return /^hor[áa]rio a confirmar/i.test(item.notas ?? '');
+}
+
+/** Copia texto; se o navegador não deixar, devolve false. */
+export async function copiar(texto: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(texto);
+    return true;
+  } catch {
+    try {
+      const t = document.createElement('textarea');
+      t.value = texto;
+      t.style.position = 'fixed';
+      t.style.opacity = '0';
+      document.body.appendChild(t);
+      t.select();
+      const ok = document.execCommand('copy');
+      t.remove();
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+}
+
+/** "+81 6-4706-8800" → "tel:+81647068800". Vazio → null (esconde o botão). */
+export function linkTelefone(tel?: string): string | null {
+  const limpo = (tel ?? '').replace(/[^\d+]/g, '');
+  return limpo ? `tel:${limpo}` : null;
+}
