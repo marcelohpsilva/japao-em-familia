@@ -37,16 +37,17 @@ export async function kvSet(key: string, value: unknown) {
   }
 }
 
-export async function arquivoGet(nome: string) {
+/** Documentos guardados no aparelho, pelo ID do arquivo no Drive. */
+export async function arquivoGet(id: string) {
   try {
-    return await (await db()).get('arquivos', nome);
+    return await (await db()).get('arquivos', id);
   } catch {
     return undefined;
   }
 }
 
-export async function arquivoSet(nome: string, blob: Blob, mime: string) {
-  await (await db()).put('arquivos', { blob, mime, salvoEm: Date.now() }, nome);
+export async function arquivoSet(id: string, blob: Blob, mime: string) {
+  await (await db()).put('arquivos', { blob, mime, salvoEm: Date.now() }, id);
 }
 
 export async function arquivosSalvos(): Promise<string[]> {

@@ -8,7 +8,7 @@ import {
   entrar,
   lerRoteiro,
   lerUsuario,
-  listarComprovantes,
+  listarArvore,
   sair,
   SemAcessoError,
   TokenExpiradoError,
@@ -21,6 +21,7 @@ import {
   type Usuario,
 } from './google';
 import exemplo from '../data/sample-roteiro.json';
+import { referenciasDoRoteiro, resolverComprovante, type Resolucao } from './comprovantes';
 
 export type Sync = 'ocioso' | 'carregando' | 'precisa_login' | 'sem_acesso' | 'erro';
 
@@ -37,7 +38,9 @@ interface Estado {
   usuario: Usuario | null;
   sync: Sync;
   erro?: string;
-  comprovantes: Record<string, ArquivoDrive>;
+  /** todos os documentos dentro de Viagem-Japao (qualquer subpasta) */
+  arvore: ArquivoDrive[];
+  /** IDs dos arquivos já guardados no aparelho */
   baixados: Set<string>;
   feitos: Record<string, number>;
   ajustes: Ajustes;
@@ -53,7 +56,9 @@ interface Api extends Estado {
   entrarGoogle(): Promise<void>;
   atualizar(interativo?: boolean): Promise<void>;
   marcar(chave: string, feito: boolean): void;
-  abrirComprovante(nome: string): Promise<ResultadoComprovante>;
+  resolver(ref: string): Resolucao;
+  procurarDeNovo(): Promise<void>;
+  abrirArquivo(arq: ArquivoDrive): Promise<ResultadoComprovante>;
   baixarTudo(progresso: (feitos: number, total: number) => void): Promise<void>;
   sairEApagar(): Promise<void>;
   setAjuste<K extends keyof Ajustes>(k: K, v: Ajustes[K]): void;
@@ -71,7 +76,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     atualizadoEm: null,
     usuario: null,
     sync: 'ocioso',
-    comprovantes: {},
+    arvore: [],
     baixados: new Set(),
     feitos: {},
     ajustes: AJUSTES_PADRAO,
@@ -84,12 +89,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // Carrega a cópia local logo ao abrir (funciona sem internet).
   useEffect(() => {
     (async () => {
-      const [fonte, roteiro, atualizadoEm, usuario, comprovantes, feitos, ajustes, baixados] = await Promise.all([
+      const [fonte, roteiro, atualizadoEm, usuario, arvore, feitos, ajustes, baixados] = await Promise.all([
         kvGet<Fonte>('fonte'),
         kvGet<Roteiro>('roteiro'),
         kvGet<number>('atualizadoEm'),
         kvGet<Usuario>('usuario'),
-        kvGet<Record<string, ArquivoDrive>>('comprovantes'),
+        kvGet<ArquivoDrive[]>('arvore'),
         kvGet<Record<string, number>>('feitos'),
         kvGet<Ajustes>('ajustes'),
         arquivosSalvos(),
@@ -103,7 +108,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         roteiro: demoNaUrl || fonte === 'demo' ? (exemplo as Roteiro) : (roteiro ?? null),
         atualizadoEm: atualizadoEm ?? null,
         usuario: usuario ?? null,
-        comprovantes: comprovantes ?? {},
+        arvore: Array.isArray(arvore) ? arvore : [],
         feitos: feitos ?? {},
         ajustes: { ...AJUSTES_PADRAO, ...ajustes },
         baixados: new Set(baixados),
@@ -126,7 +131,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         return Promise.all([
           lerRoteiro(token, ids),
           estado.current.usuario ? Promise.resolve(estado.current.usuario) : lerUsuario(token),
-          ids.comprovantes ? listarComprovantes(token, ids.comprovantes) : Promise.resolve({}),
+          listarArvore(token, ids.pasta),
         ]);
       };
       let resultado;
@@ -138,15 +143,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         await kvSet('ids', null);
         resultado = await ler();
       }
-      const [roteiro, usuario, comprovantes] = resultado;
+      const [roteiro, usuario, arvore] = resultado;
       const agoraMs = Date.now();
       await Promise.all([
         kvSet('roteiro', roteiro),
         kvSet('usuario', usuario),
-        kvSet('comprovantes', comprovantes),
+        kvSet('arvore', arvore),
         kvSet('atualizadoEm', agoraMs),
       ]);
-      patch({ roteiro, usuario, comprovantes, atualizadoEm: agoraMs, sync: 'ocioso', erro: undefined });
+      patch({ roteiro, usuario, arvore, atualizadoEm: agoraMs, sync: 'ocioso', erro: undefined });
     },
     [patch],
   );
@@ -278,36 +283,33 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           return { ...s, feitos };
         });
       },
-      async abrirComprovante(nome) {
-        const local = await arquivoGet(nome);
-        if (local) return { ok: true, url: URL.createObjectURL(local.blob), mime: local.mime, nome };
-        if (estado.current.fonte === 'demo') {
-          return { ok: false, motivo: 'No modo exemplo não há comprovantes. Entre com o Google para ver os reais.' };
+      resolver(ref) {
+        return resolverComprovante(ref, estado.current.arvore);
+      },
+      async procurarDeNovo() {
+        // Documento enviado depois da última atualização: relê as pastas.
+        const token = tokenAgora();
+        if (!token || !navigator.onLine) return;
+        const ids = await kvGet<{ pasta?: string }>('ids');
+        if (!ids?.pasta) return;
+        const arvore = await listarArvore(token, ids.pasta);
+        await kvSet('arvore', arvore);
+        setE((x) => ({ ...x, arvore }));
+      },
+      async abrirArquivo(arq) {
+        const local = await arquivoGet(arq.id);
+        if (local) return { ok: true, url: URL.createObjectURL(local.blob), mime: local.mime, nome: arq.nome };
+        if (!navigator.onLine) return { ok: false, motivo: 'Sem internet, e este documento ainda não foi baixado para o aparelho.' };
+        const token = tokenAgora();
+        if (!token) {
+          renovarNoToque();
+          return { ok: false, motivo: 'A conexão com o Google expirou. Toque em qualquer lugar para reconectar e abra de novo.' };
         }
-        let arq = estado.current.comprovantes[nome];
-        if (!arq && !navigator.onLine) return { ok: false, motivo: 'Comprovante não achado (e sem internet para procurar de novo).' };
-        if (!navigator.onLine) return { ok: false, motivo: 'Sem internet e este comprovante ainda não foi baixado.' };
         try {
-          const token = tokenAgora();
-          if (!token) {
-            renovarNoToque();
-            return { ok: false, motivo: 'A conexão com o Google expirou. Toque em qualquer lugar para reconectar e abra o comprovante de novo.' };
-          }
-          if (!arq) {
-            // Pode ter sido enviado depois da última atualização: relê a pasta Comprovantes.
-            const ids = await kvGet<{ comprovantes?: string }>('ids');
-            if (ids?.comprovantes) {
-              const comprovantes = await listarComprovantes(token, ids.comprovantes);
-              await kvSet('comprovantes', comprovantes);
-              setE((x) => ({ ...x, comprovantes }));
-              arq = comprovantes[nome];
-            }
-          }
-          if (!arq) return { ok: false, motivo: `Comprovante não achado na pasta Comprovantes. Confira se o arquivo tem exatamente este nome: ${nome}` };
           const blob = await baixarArquivo(token, arq.id);
-          await arquivoSet(nome, blob, arq.mimeType);
-          setE((s) => ({ ...s, baixados: new Set([...s.baixados, nome]) }));
-          return { ok: true, url: URL.createObjectURL(blob), mime: arq.mimeType, nome };
+          await arquivoSet(arq.id, blob, arq.mimeType);
+          setE((s) => ({ ...s, baixados: new Set([...s.baixados, arq.id]) }));
+          return { ok: true, url: URL.createObjectURL(blob), mime: arq.mimeType, nome: arq.nome };
         } catch (err) {
           return { ok: false, motivo: err instanceof Error ? err.message : 'Erro ao abrir' };
         }
@@ -316,18 +318,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const s = estado.current;
         if (s.fonte !== 'google') return;
         const token = tokenAgora() ?? (await entrar(false, s.usuario?.email));
-        const usados = new Set(
-          (s.roteiro?.itens ?? []).flatMap((i) => (i.comprovante ?? '').split(';').map((x) => x.trim())).filter(Boolean),
-        );
-        const faltam = [...usados].filter((n) => s.comprovantes[n] && !s.baixados.has(n));
+        const usados = new Map<string, ArquivoDrive>();
+        for (const ref of referenciasDoRoteiro(s.roteiro?.itens ?? [])) {
+          for (const a of resolverComprovante(ref, s.arvore).arquivos) usados.set(a.id, a);
+        }
+        const faltam = [...usados.values()].filter((a) => !s.baixados.has(a.id));
         let n = 0;
         progresso(0, faltam.length);
-        for (const nome of faltam) {
-          const arq = s.comprovantes[nome];
+        for (const arq of faltam) {
           const blob = await baixarArquivo(token, arq.id);
-          await arquivoSet(nome, blob, arq.mimeType);
+          await arquivoSet(arq.id, blob, arq.mimeType);
           n++;
-          setE((x) => ({ ...x, baixados: new Set([...x.baixados, nome]) }));
+          setE((x) => ({ ...x, baixados: new Set([...x.baixados, arq.id]) }));
           progresso(n, faltam.length);
         }
       },

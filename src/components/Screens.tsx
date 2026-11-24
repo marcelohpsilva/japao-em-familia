@@ -3,6 +3,7 @@ import type { Roteiro } from '../types';
 import { useStore } from '../lib/store';
 import { useUi, STATUS_PENDENTE, TEXTO_PAGAR, TEXTO_STATUS, ienes, ICONE_TIPO, linkTelefone } from '../lib/ui';
 import { baixarIcs, itensComLembrete } from '../lib/ics';
+import { referenciasDoRoteiro } from '../lib/comprovantes';
 import { NOME_MUNDO, KANJI_MUNDO, NUMERO_MUNDO, resumoDoDia, totalMoedas, fusoDoItem, cartoesDoDia } from '../lib/game';
 import { dateInTz, formatDia, TZ_JAPAO, zonedToEpoch } from '../lib/time';
 import { haQuanto } from '../lib/hooks';
@@ -218,12 +219,12 @@ export function Pendencias({ roteiro, agoraMs }: { roteiro: Roteiro; agoraMs: nu
 export function Ajustes() {
   const s = useStore();
   const [baixando, setBaixando] = useState<string | null>(null);
-  const usados = new Set(
-    (s.roteiro?.itens ?? []).flatMap((i) => (i.comprovante ?? '').split(';').map((x) => x.trim())).filter(Boolean),
-  );
-  const disponiveis = [...usados].filter((n) => s.comprovantes[n]);
-  const tamanho = disponiveis.reduce((t, n) => t + Number(s.comprovantes[n].size ?? 0), 0);
-  const jaBaixados = disponiveis.filter((n) => s.baixados.has(n)).length;
+  // Cada nome da coluna "comprovante" → documentos achados nas pastas de Viagem-Japao.
+  const relacao = referenciasDoRoteiro(s.roteiro?.itens ?? []).map((ref) => ({ ref, ...s.resolver(ref) }));
+  const arquivos = [...new Map(relacao.flatMap((r) => r.arquivos).map((a) => [a.id, a])).values()];
+  const tamanho = arquivos.reduce((t, a) => t + Number(a.size ?? 0), 0);
+  const jaBaixados = arquivos.filter((a) => s.baixados.has(a.id)).length;
+  const faltando = relacao.filter((r) => !r.arquivos.length).length;
 
   return (
     <div className="ajustes">
@@ -261,7 +262,7 @@ export function Ajustes() {
             {s.sync === 'carregando' ? 'Atualizando…' : '🔄 Atualizar agora'}
           </button>
           <p>
-            Comprovantes no aparelho: {jaBaixados} de {disponiveis.length}
+            Documentos no aparelho: {jaBaixados} de {arquivos.length}
             {tamanho > 0 && ` (${(tamanho / 1048576).toFixed(1)} MB no total)`}
           </p>
           <button
@@ -280,6 +281,35 @@ export function Ajustes() {
           >
             {baixando ? `Baixando ${baixando}…` : '⬇️ Baixar tudo para offline'}
           </button>
+        </section>
+      )}
+
+      {s.fonte === 'google' && relacao.length > 0 && (
+        <section className="cartao-toy bloco">
+          <h2 className="secao-titulo">Comprovantes da planilha</h2>
+          <p>
+            {relacao.length - faltando} de {relacao.length} achados nas pastas de Viagem-Japao
+            {faltando > 0 ? ` · ${faltando} não achado${faltando > 1 ? 's' : ''}` : ' 🎉'}
+          </p>
+          <details>
+            <summary>Ver onde cada um foi achado</summary>
+            <ul className="lista-docs">
+              {relacao.map((r) => (
+                <li key={r.ref}>
+                  <span aria-hidden="true">{r.arquivos.length ? '✅' : '❌'}</span>
+                  <span>
+                    <span className="doc-ref">{r.ref}</span>
+                    <br />
+                    <span className={r.arquivos.length ? 'doc-local' : 'doc-local doc-falta'}>
+                      {r.arquivos.length
+                        ? `${r.local}${r.arquivos.length > 1 ? ` (${r.arquivos.length} arquivos)` : ''}`
+                        : 'não achado: suba o arquivo em qualquer pasta de Viagem-Japao ou ponha na planilha o nome exato do arquivo ou da pasta'}
+                    </span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </details>
         </section>
       )}
 

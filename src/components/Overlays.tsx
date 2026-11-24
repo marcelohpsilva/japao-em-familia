@@ -5,6 +5,7 @@ import { useStore, type ResultadoComprovante } from '../lib/store';
 import { ICONE_TIPO, TEXTO_PAGAR, TEXTO_STATUS, copiar, horaAConfirmar, ienes, nomeDoFuso, useUi } from '../lib/ui';
 import { KANJI_MUNDO, rotuloFase, PONTOS_DIA_CRITICOS } from '../lib/game';
 import { formatDuracao } from '../lib/time';
+import { rotuloArquivo } from '../lib/comprovantes';
 import { Estrelas, Musubi } from './Art';
 
 /** Folha que sobe de baixo. */
@@ -127,23 +128,44 @@ export function Taxi({ alvo, onFechar }: { alvo: { titulo: string; endereco_jp?:
   );
 }
 
-/** Abre um ou mais comprovantes (separados por ;). */
+/**
+ * Abre os documentos de um item. A coluna "comprovante" pode ter vários nomes separados
+ * por ";", e cada nome pode corresponder a vários arquivos (ex.: um ingresso por pessoa).
+ */
 export function Comprovante({ nomes, onFechar }: { nomes: string | null; onFechar(): void }) {
-  const { abrirComprovante } = useStore();
-  const lista = (nomes ?? '').split(';').map((s) => s.trim()).filter(Boolean);
+  const { resolver, abrirArquivo, procurarDeNovo, fonte, online, arvore } = useStore();
+  const refs = (nomes ?? '').split(';').map((x) => x.trim()).filter(Boolean);
+  const resolucoes = refs.map((r) => ({ ref: r, ...resolver(r) }));
+  const arquivos = [...new Map(resolucoes.flatMap((r) => r.arquivos).map((a) => [a.id, a])).values()];
+  const naoAchados = resolucoes.filter((r) => !r.arquivos.length).map((r) => r.ref);
   const [i, setI] = useState(0);
   const [res, setRes] = useState<ResultadoComprovante | null>(null);
+  const [procurou, setProcurou] = useState(false);
+  const atual = arquivos[i];
 
   useEffect(() => {
     setI(0);
+    setProcurou(false);
   }, [nomes]);
 
+  // Não achou nada? Relê as pastas uma vez (pode ter sido enviado depois da última atualização).
   useEffect(() => {
-    if (!lista[i]) return;
+    if (nomes && fonte === 'google' && online && !procurou && naoAchados.length) {
+      setProcurou(true);
+      void procurarDeNovo();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nomes, naoAchados.length, procurou]);
+
+  useEffect(() => {
+    if (!atual) {
+      setRes(null);
+      return;
+    }
     let url: string | null = null;
     let vivo = true;
     setRes(null);
-    abrirComprovante(lista[i]).then((r) => {
+    abrirArquivo(atual).then((r) => {
       if (!vivo) {
         if (r.ok) URL.revokeObjectURL(r.url);
         return;
@@ -156,23 +178,46 @@ export function Comprovante({ nomes, onFechar }: { nomes: string | null; onFecha
       if (url) URL.revokeObjectURL(url);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nomes, i]);
+  }, [atual?.id]);
+
+  const local = atual ? atual.caminho.join(' › ') : '';
 
   return (
     <Folha aberta={!!nomes} onFechar={onFechar} titulo="Comprovante">
       <div className="comprovante">
-        <h2>🎫 Comprovante</h2>
-        {lista.length > 1 && (
-          <div className="abas-mini" role="tablist">
-            {lista.map((n, k) => (
-              <button key={n} type="button" role="tab" aria-selected={k === i} className={k === i ? 'on' : ''} onClick={() => setI(k)}>
-                {k + 1}
+        <h2>🎫 {arquivos.length > 1 ? `Comprovantes (${arquivos.length})` : 'Comprovante'}</h2>
+        {arquivos.length > 1 && (
+          <div className="abas-docs" role="tablist" aria-label="Documentos">
+            {arquivos.map((a, k) => (
+              <button key={a.id} type="button" role="tab" aria-selected={k === i} className={k === i ? 'on' : ''} onClick={() => setI(k)}>
+                {rotuloArquivo(a)}
               </button>
             ))}
           </div>
         )}
-        <p className="comprovante-nome">{lista[i]}</p>
-        {!res && <p className="carregando">Abrindo…</p>}
+        {atual && (
+          <p className="comprovante-nome">
+            📁 {local ? `${local} › ` : ''}
+            {atual.nome}
+          </p>
+        )}
+        {fonte === 'demo' && (
+          <div className="aviso-box">
+            <Musubi pose="idle" size={64} />
+            <p>No modo exemplo não há documentos. Entre com o Google para ver os reais.</p>
+          </div>
+        )}
+        {fonte !== 'demo' && !arquivos.length && (
+          <div className="aviso-box">
+            <Musubi pose="idle" size={64} />
+            <p>
+              Documento não achado na pasta Viagem-Japao
+              {arvore.length === 0 ? ' (toque em ⚙️ › Atualizar agora para ler as pastas)' : ''}.
+            </p>
+            <p className="comprovante-nome">Procurado: {naoAchados.join('; ')}</p>
+          </div>
+        )}
+        {atual && !res && <p className="carregando">Abrindo…</p>}
         {res && !res.ok && (
           <div className="aviso-box">
             <Musubi pose="idle" size={64} />
@@ -192,6 +237,9 @@ export function Comprovante({ nomes, onFechar }: { nomes: string | null; onFecha
               Abrir em tela cheia
             </a>
           </>
+        )}
+        {arquivos.length > 0 && naoAchados.length > 0 && (
+          <p className="legenda">Não achado: {naoAchados.join('; ')}</p>
         )}
       </div>
     </Folha>

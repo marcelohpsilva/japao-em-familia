@@ -17,7 +17,6 @@ const SCOPES = [
 
 const PASTA = 'Viagem-Japao';
 const ROTEIRO = 'Roteiro';
-const COMPROVANTES = 'Comprovantes';
 const MIME_PASTA = 'application/vnd.google-apps.folder';
 const MIME_PLANILHA = 'application/vnd.google-apps.spreadsheet';
 
@@ -38,11 +37,14 @@ export interface Usuario {
 export interface IdsDrive {
   pasta: string;
   roteiro: string;
-  comprovantes?: string;
 }
 
-export interface ArquivoDrive {
+import type { ArquivoDrive } from './comprovantes';
+export type { ArquivoDrive };
+
+interface ArquivoDriveApi {
   id: string;
+  name: string;
   mimeType: string;
   size?: string;
 }
@@ -207,8 +209,7 @@ export async function acharIds(token: string): Promise<IdsDrive> {
   if (!pasta) throw new SemAcessoError('Pasta Viagem-Japao não encontrada');
   const roteiro = await buscarPorNome(token, ROTEIRO, MIME_PLANILHA, pasta);
   if (!roteiro) throw new SemAcessoError('Planilha Roteiro não encontrada');
-  const comprovantes = await buscarPorNome(token, COMPROVANTES, MIME_PASTA, pasta);
-  const ids = { pasta, roteiro, comprovantes };
+  const ids = { pasta, roteiro };
   await kvSet('ids', ids);
   return ids;
 }
@@ -239,27 +240,43 @@ export async function lerRoteiro(token: string, ids: IdsDrive): Promise<Roteiro>
   return parseRoteiro(dados);
 }
 
-/** Lista nome → arquivo da pasta Comprovantes. */
-export async function listarComprovantes(token: string, pastaId: string) {
-  const mapa: Record<string, ArquivoDrive> = {};
-  let pageToken: string | undefined;
-  do {
-    const params = new URLSearchParams({
-      q: `'${pastaId}' in parents and trashed = false`,
-      fields: 'nextPageToken, files(id,name,mimeType,size)',
-      pageSize: '200',
-      supportsAllDrives: 'true',
-      includeItemsFromAllDrives: 'true',
-    });
-    if (pageToken) params.set('pageToken', pageToken);
-    const r = await api<{ nextPageToken?: string; files: (ArquivoDrive & { name: string })[] }>(
-      `https://www.googleapis.com/drive/v3/files?${params}`,
-      token,
-    );
-    for (const f of r.files) mapa[f.name] = { id: f.id, mimeType: f.mimeType, size: f.size };
-    pageToken = r.nextPageToken;
-  } while (pageToken);
-  return mapa;
+/**
+ * Lista TODOS os documentos dentro de Viagem-Japao, em qualquer subpasta
+ * (Passagens, Hoteis, Parques/Universal/30-12/...), guardando o caminho de pastas.
+ * Planilhas e documentos Google ficam de fora: só PDFs, imagens etc.
+ */
+export async function listarArvore(token: string, pastaRaiz: string): Promise<ArquivoDrive[]> {
+  const out: ArquivoDrive[] = [];
+  const fila: { id: string; caminho: string[] }[] = [{ id: pastaRaiz, caminho: [] }];
+  const vistas = new Set<string>();
+  while (fila.length) {
+    const atual = fila.shift()!;
+    if (vistas.has(atual.id) || atual.caminho.length > 8) continue;
+    vistas.add(atual.id);
+    let pageToken: string | undefined;
+    do {
+      const params = new URLSearchParams({
+        q: `'${atual.id}' in parents and trashed = false`,
+        fields: 'nextPageToken, files(id,name,mimeType,size)',
+        pageSize: '200',
+        supportsAllDrives: 'true',
+        includeItemsFromAllDrives: 'true',
+      });
+      if (pageToken) params.set('pageToken', pageToken);
+      const r = await api<{ nextPageToken?: string; files: ArquivoDriveApi[] }>(
+        `https://www.googleapis.com/drive/v3/files?${params}`,
+        token,
+      );
+      for (const f of r.files) {
+        if (f.mimeType === MIME_PASTA) fila.push({ id: f.id, caminho: [...atual.caminho, f.name] });
+        else if (!f.mimeType.startsWith('application/vnd.google-apps.')) {
+          out.push({ id: f.id, nome: f.name, mimeType: f.mimeType, size: f.size, caminho: atual.caminho });
+        }
+      }
+      pageToken = r.nextPageToken;
+    } while (pageToken);
+  }
+  return out;
 }
 
 export async function baixarArquivo(token: string, id: string): Promise<Blob> {
