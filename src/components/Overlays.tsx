@@ -1,10 +1,11 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import { useEffect, useState } from 'react';
-import type { Dia, Item } from '../types';
+import type { Dia, Item, StatusItem } from '../types';
 import { useStore, type ResultadoComprovante } from '../lib/store';
-import { ICONE_TIPO, TEXTO_PAGAR, TEXTO_STATUS, copiar, horaAConfirmar, ienes, nomeDoFuso, useUi } from '../lib/ui';
+import { ICONE_TIPO, STATUS_PENDENTE, TEXTO_PAGAR, TEXTO_STATUS, copiar, horaAConfirmar, ienes, nomeDoFuso, useUi } from '../lib/ui';
 import { KANJI_MUNDO, rotuloFase, PONTOS_DIA_CRITICOS } from '../lib/game';
 import { formatDuracao } from '../lib/time';
+import { vibrar } from '../lib/fx';
 import { rotuloArquivo } from '../lib/comprovantes';
 import { Estrelas, Musubi } from './Art';
 
@@ -59,6 +60,74 @@ export function BotaoCopiar({ texto }: { texto: string }) {
   );
 }
 
+const O_QUE_FALTA: Record<string, string> = {
+  a_reservar: 'Falta fazer a reserva.',
+  a_confirmar: 'Falta confirmar a reserva.',
+  contratar_no_japao: 'Falta comprar ou contratar lá no Japão.',
+};
+
+/** Pendência: mostra o que falta e permite concluir (grava o novo status na planilha). */
+function BlocoPendencia({ item, onConcluida }: { item: Item; onConcluida(): void }) {
+  const { podeEditar, fonte, online, concluirPendencia } = useStore();
+  const ui = useUi();
+  const [escolha, setEscolha] = useState<StatusItem | null>(null);
+  const [gravando, setGravando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const opcoes: StatusItem[] = item.status === 'contratar_no_japao' ? ['comprado', 'reservado'] : ['reservado', 'comprado'];
+  const pode = fonte === 'demo' || podeEditar;
+
+  const confirmar = () => {
+    if (!escolha) return;
+    setGravando(true);
+    setErro(null);
+    // Chamado direto no toque: se precisar pedir permissão ao Google, a janela abre na hora.
+    concluirPendencia(item.id, escolha).then((r) => {
+      setGravando(false);
+      if (r.ok) {
+        vibrar(60);
+        ui.aviso(fonte === 'demo' ? '✓ Pendência concluída (modo exemplo: só neste aparelho)' : '✓ Pendência concluída. Planilha atualizada!');
+        onConcluida();
+      } else {
+        setErro(r.motivo);
+      }
+    });
+  };
+
+  return (
+    <section className="pendencia-box">
+      <p className="pendencia-titulo">
+        <span className="selo selo-pendente">{TEXTO_STATUS[item.status]}</span> {O_QUE_FALTA[item.status] ?? ''}
+      </p>
+      {!pode ? (
+        <p className="legenda" style={{ textAlign: 'left' }}>Só quem pode editar a planilha Roteiro consegue concluir esta pendência.</p>
+      ) : escolha ? (
+        <div className="pendencia-confirma">
+          <p>
+            Gravar <b>{TEXTO_STATUS[escolha]}</b> no status deste item{fonte === 'demo' ? '' : ' na planilha Roteiro'}?
+          </p>
+          <button type="button" className="btn btn-primario" onClick={confirmar} disabled={gravando}>
+            {gravando ? 'Gravando…' : '✓ Sim, concluir'}
+          </button>
+          <button type="button" className="btn" onClick={() => setEscolha(null)} disabled={gravando}>Cancelar</button>
+        </div>
+      ) : (
+        <>
+          <p className="pendencia-pergunta">Já resolveu? Marque como ficou:</p>
+          <div className="pendencia-opcoes">
+            {opcoes.map((o) => (
+              <button key={o} type="button" className="btn" disabled={fonte !== 'demo' && !online} onClick={() => setEscolha(o)}>
+                ✓ {TEXTO_STATUS[o]}
+              </button>
+            ))}
+          </div>
+          {fonte !== 'demo' && !online && <p className="legenda">Sem internet: conclua quando tiver sinal.</p>}
+        </>
+      )}
+      {erro && <p className="aviso-box">{erro}</p>}
+    </section>
+  );
+}
+
 export function ItemSheet({ item, onFechar }: { item: Item | null; onFechar(): void }) {
   const ui = useUi();
   return (
@@ -73,6 +142,7 @@ export function ItemSheet({ item, onFechar }: { item: Item | null; onFechar(): v
               : horaAConfirmar(item) ? 'Horário a confirmar' : 'A qualquer hora'}
             {nomeDoFuso(item.fuso) ? ` (hora de ${nomeDoFuso(item.fuso)})` : ''}
           </p>
+          {STATUS_PENDENTE.has(item.status) && <BlocoPendencia key={item.id} item={item} onConcluida={onFechar} />}
           {item.critico && <p className="selo selo-critico">⚠️ Importante{item.lembrete_min ? ` · lembrete ${item.lembrete_min} min antes` : ''}</p>}
           <dl className="detalhe-lista">
             {item.local && (<><dt>Local</dt><dd>{item.local}</dd></>)}

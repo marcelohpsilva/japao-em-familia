@@ -129,7 +129,7 @@ export default function App() {
           <main className="conteudo">
             <AnimatePresence mode="wait">
               <motion.div key={aba + (dataEscolhida ?? '')} initial={{ opacity: 0, x: 24 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
-                {aba === 'hoje' && <Hoje roteiro={roteiro} agoraMs={agoraMs} dataEscolhida={dataEscolhida} setDataEscolhida={setDataEscolhida} />}
+                {aba === 'hoje' && <Hoje roteiro={roteiro} agoraMs={agoraMs} dataEscolhida={dataEscolhida} setDataEscolhida={setDataEscolhida} irPara={setAba} />}
                 {aba === 'agenda' && <Agenda roteiro={roteiro} agoraMs={agoraMs} abrirDia={ui.irParaDia} />}
                 {aba === 'pendencias' && <Pendencias roteiro={roteiro} agoraMs={agoraMs} />}
                 {aba === 'contatos' && <Contatos roteiro={roteiro} />}

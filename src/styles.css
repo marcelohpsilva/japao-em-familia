@@ -456,3 +456,10 @@ a { color: var(--azul); }
 .lista-docs .doc-ref { font-weight: 800; word-break: break-all; }
 .lista-docs .doc-local { color: var(--texto-suave); word-break: break-word; }
 .doc-falta { color: var(--vermelho); }
+
+.pendencia-box { margin: 12px 0; padding: 12px; border: 2.5px dashed var(--vermelho); border-radius: 16px; background: #fff1ee; }
+.pendencia-titulo { margin: 0; font-weight: 800; }
+.pendencia-pergunta { margin: 10px 0 0; font-weight: 700; }
+.pendencia-opcoes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.pendencia-confirma p { margin: 10px 0 0; }
+.pendencia-box .aviso-box { margin-top: 10px; }

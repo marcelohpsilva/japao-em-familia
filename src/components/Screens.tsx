@@ -26,14 +26,27 @@ export function etapaAtual(roteiro: Roteiro, agoraMs: number): Etapa {
   return { tipo: 'durante', data: data > v.fim_viagem ? v.fim_viagem : data };
 }
 
+/** Pendências do começo ao fim da viagem, na mesma ordem da tela Hoje dentro de cada dia. */
+function pendenciasEmOrdem(roteiro: Roteiro) {
+  const posicao = new Map<string, number>();
+  for (const d of roteiro.dias) {
+    cartoesDoDia(roteiro, d.data).forEach((c, k) => c.itens.forEach((i) => posicao.set(i.id, k)));
+  }
+  return roteiro.itens
+    .filter((i) => STATUS_PENDENTE.has(i.status))
+    .sort((a, b) => a.data.localeCompare(b.data) || (posicao.get(a.id) ?? 0) - (posicao.get(b.id) ?? 0));
+}
+
 // ---------- Hoje ----------
 
-export function Hoje({ roteiro, agoraMs, dataEscolhida, setDataEscolhida }: {
+export function Hoje({ roteiro, agoraMs, dataEscolhida, setDataEscolhida, irPara }: {
   roteiro: Roteiro;
   agoraMs: number;
   dataEscolhida: string | null;
   setDataEscolhida(d: string | null): void;
+  irPara(aba: 'pendencias'): void;
 }) {
+  const ui = useUi();
   const etapa = etapaAtual(roteiro, agoraMs);
   const dataHoje = etapa.tipo === 'durante' ? etapa.data : null;
   const data = dataEscolhida ?? dataHoje;
@@ -56,7 +69,7 @@ export function Hoje({ roteiro, agoraMs, dataEscolhida, setDataEscolhida }: {
 
   // Antes da viagem: contagem + prévia da Fase 1 + pendências.
   const primeiroJapao = roteiro.dias.find((d) => d.mundo !== 'voo') ?? roteiro.dias[0];
-  const pend = roteiro.itens.filter((i) => STATUS_PENDENTE.has(i.status));
+  const pend = pendenciasEmOrdem(roteiro);
   return (
     <div className="antes">
       <Countdown roteiro={roteiro} agoraMs={agoraMs} />
@@ -75,14 +88,24 @@ export function Hoje({ roteiro, agoraMs, dataEscolhida, setDataEscolhida }: {
         {pend.length === 0 ? (
           <p>Tudo resolvido! 🎉</p>
         ) : (
-          <ul className="lista-simples">
+          <>
+          <ul className="lista-pend">
             {pend.slice(0, 5).map((i) => (
               <li key={i.id}>
-                <b>{formatDia(i.data)}</b> · {i.titulo} <span className="selo selo-pendente">{TEXTO_STATUS[i.status]}</span>
+                <button type="button" onClick={() => ui.abrirItem(i)}>
+                  <span className="pend-titulo">{ICONE_TIPO[i.tipo]} {i.titulo}</span>
+                  <span className="pend-meta">{formatDia(i.data)}</span>
+                  <span className="selo selo-pendente">{TEXTO_STATUS[i.status]}</span>
+                </button>
               </li>
             ))}
-            {pend.length > 5 && <li>… e mais {pend.length - 5} na aba Pendências</li>}
           </ul>
+          {pend.length > 5 && (
+            <button type="button" className="btn" onClick={() => irPara('pendencias')}>
+              Ver todas as {pend.length} pendências
+            </button>
+          )}
+          </>
         )}
       </section>
     </div>
@@ -160,15 +183,7 @@ export function Agenda({ roteiro, agoraMs, abrirDia }: { roteiro: Roteiro; agora
 
 export function Pendencias({ roteiro, agoraMs }: { roteiro: Roteiro; agoraMs: number }) {
   const ui = useUi();
-  // Do começo ao fim da viagem: por dia e, dentro do dia, na mesma ordem da tela Hoje
-  // (horário real no fuso de cada item; itens sem hora na posição da planilha).
-  const posicao = new Map<string, number>();
-  for (const d of roteiro.dias) {
-    cartoesDoDia(roteiro, d.data).forEach((c, k) => c.itens.forEach((i) => posicao.set(i.id, k)));
-  }
-  const pend = roteiro.itens
-    .filter((i) => STATUS_PENDENTE.has(i.status))
-    .sort((a, b) => a.data.localeCompare(b.data) || (posicao.get(a.id) ?? 0) - (posicao.get(b.id) ?? 0));
+  const pend = pendenciasEmOrdem(roteiro);
   const porData = new Map<string, typeof pend>();
   for (const i of pend) porData.set(i.data, [...(porData.get(i.data) ?? []), i]);
 

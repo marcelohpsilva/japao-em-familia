@@ -33,7 +33,9 @@ Acrescente `agora=` na URL para o app agir como se fosse aquele momento (o reló
 2. Em **APIs e serviços → Biblioteca**, ative **Google Sheets API** e **Google Drive API**.
 3. Em **APIs e serviços → Tela de consentimento OAuth** (ou **Google Auth Platform**):
    - Tipo de usuário: **Externo**. Nome do app: `Japão em Família`.
-   - Escopos: `spreadsheets.readonly`, `drive.readonly`, `openid`, `email`, `profile`.
+   - Escopos: `spreadsheets.readonly`, `drive.readonly`, `openid`, `email`, `profile` e `spreadsheets`
+     (este último só é pedido quando alguém conclui uma pendência; o app grava apenas a coluna `status`
+     do item, e só para quem pode editar a planilha).
    - Status de publicação: **Testing**. Em **Test users**, adicione as três contas Google da família.
 4. Em **APIs e serviços → Credenciais → Criar credenciais → ID do cliente OAuth**:
    - Tipo: **Aplicativo da Web**.

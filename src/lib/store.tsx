@@ -1,6 +1,6 @@
 // Estado do app: de onde vêm os dados, cópia local, moedas e ajustes.
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { Fonte, Roteiro } from '../types';
+import type { Fonte, Roteiro, StatusItem } from '../types';
 import { apagarTudo, arquivoGet, arquivoSet, arquivosSalvos, kvGet, kvSet } from './db';
 import {
   acharIds,
@@ -13,6 +13,11 @@ import {
   SemAcessoError,
   TokenExpiradoError,
   carregarToken,
+  carregarPreferenciaEscrita,
+  gravarStatusItem,
+  podeEditarPlanilha,
+  SemPermissaoEscritaError,
+  tokenPodeEscrever,
   esquecerToken,
   prepararLogin,
   tokenAgora,
@@ -42,6 +47,8 @@ interface Estado {
   arvore: ArquivoDrive[];
   /** IDs dos arquivos já guardados no aparelho */
   baixados: Set<string>;
+  /** a conta logada pode editar a planilha (só então aparece "Concluir pendência") */
+  podeEditar: boolean;
   feitos: Record<string, number>;
   ajustes: Ajustes;
   online: boolean;
@@ -59,6 +66,7 @@ interface Api extends Estado {
   resolver(ref: string): Resolucao;
   procurarDeNovo(): Promise<void>;
   abrirArquivo(arq: ArquivoDrive): Promise<ResultadoComprovante>;
+  concluirPendencia(itemId: string, novoStatus: StatusItem): Promise<{ ok: true } | { ok: false; motivo: string }>;
   baixarTudo(progresso: (feitos: number, total: number) => void): Promise<void>;
   sairEApagar(): Promise<void>;
   setAjuste<K extends keyof Ajustes>(k: K, v: Ajustes[K]): void;
@@ -78,6 +86,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     sync: 'ocioso',
     arvore: [],
     baixados: new Set(),
+    podeEditar: false,
     feitos: {},
     ajustes: AJUSTES_PADRAO,
     online: navigator.onLine,
@@ -99,7 +108,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         kvGet<Ajustes>('ajustes'),
         arquivosSalvos(),
         carregarToken(),
+        carregarPreferenciaEscrita(),
       ]);
+      const podeEditar = !!(await kvGet<boolean>('podeEditar'));
       const demoNaUrl = new URLSearchParams(location.search).has('demo');
       setE((s) => ({
         ...s,
@@ -112,6 +123,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         feitos: feitos ?? {},
         ajustes: { ...AJUSTES_PADRAO, ...ajustes },
         baixados: new Set(baixados),
+        podeEditar,
       }));
     })();
     const on = () => patch({ online: true });
@@ -132,6 +144,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           lerRoteiro(token, ids),
           estado.current.usuario ? Promise.resolve(estado.current.usuario) : lerUsuario(token),
           listarArvore(token, ids.pasta),
+          podeEditarPlanilha(token, ids.roteiro),
         ]);
       };
       let resultado;
@@ -143,15 +156,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         await kvSet('ids', null);
         resultado = await ler();
       }
-      const [roteiro, usuario, arvore] = resultado;
+      const [roteiro, usuario, arvore, podeEditar] = resultado;
       const agoraMs = Date.now();
       await Promise.all([
         kvSet('roteiro', roteiro),
         kvSet('usuario', usuario),
         kvSet('arvore', arvore),
+        kvSet('podeEditar', podeEditar),
         kvSet('atualizadoEm', agoraMs),
       ]);
-      patch({ roteiro, usuario, arvore, atualizadoEm: agoraMs, sync: 'ocioso', erro: undefined });
+      patch({ roteiro, usuario, arvore, podeEditar, atualizadoEm: agoraMs, sync: 'ocioso', erro: undefined });
     },
     [patch],
   );
@@ -332,6 +346,47 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           setE((x) => ({ ...x, baixados: new Set([...x.baixados, arq.id]) }));
           progresso(n, faltam.length);
         }
+      },
+      concluirPendencia(itemId, novoStatus) {
+        const s = estado.current;
+        const aplicarLocal = async () => {
+          setE((x) => {
+            if (!x.roteiro) return x;
+            const roteiro = { ...x.roteiro, itens: x.roteiro.itens.map((i) => (i.id === itemId ? { ...i, status: novoStatus } : i)) };
+            if (x.fonte === 'google') void kvSet('roteiro', roteiro);
+            return { ...x, roteiro };
+          });
+        };
+        if (s.fonte === 'demo') {
+          return aplicarLocal().then(() => ({ ok: true as const }));
+        }
+        if (!navigator.onLine) {
+          return Promise.resolve({ ok: false as const, motivo: 'Sem internet. Conclua quando tiver sinal: a planilha precisa ser atualizada online.' });
+        }
+        // Se ainda não temos permissão de escrita, pede AGORA (dentro do toque, para o Safari não bloquear).
+        const token = tokenAgora();
+        const pedido = token && tokenPodeEscrever() ? Promise.resolve(token) : entrar(false, s.usuario?.email, true);
+        return (async () => {
+          try {
+            const t = await pedido;
+            if (!tokenPodeEscrever()) {
+              return { ok: false as const, motivo: 'O Google não deu permissão para editar a planilha. Tente de novo e marque a opção de editar.' };
+            }
+            const ids = await kvGet<{ roteiro?: string }>('ids');
+            if (!ids?.roteiro) return { ok: false as const, motivo: 'Planilha Roteiro não encontrada. Toque em Atualizar agora e tente de novo.' };
+            await gravarStatusItem(t, ids.roteiro, itemId, novoStatus);
+            await aplicarLocal();
+            void atualizar(false); // relê a planilha em segundo plano para confirmar
+            return { ok: true as const };
+          } catch (err) {
+            if (err instanceof SemPermissaoEscritaError) {
+              setE((x) => ({ ...x, podeEditar: false }));
+              void kvSet('podeEditar', false);
+            }
+            if (err instanceof TokenExpiradoError) esquecerToken();
+            return { ok: false as const, motivo: err instanceof Error ? err.message : 'Erro ao gravar' };
+          }
+        })();
       },
       async sairEApagar() {
         await sair();

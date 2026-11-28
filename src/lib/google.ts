@@ -7,6 +7,9 @@ import type { Roteiro } from '../types';
 
 export const CLIENT_ID: string = import.meta.env.VITE_GOOGLE_CLIENT_ID ?? '';
 
+// Leitura para todos. A escrita na planilha é pedida à parte, só quando alguém conclui
+// uma pendência pela primeira vez (quem só consulta nunca vê esse pedido).
+const ESCOPO_ESCRITA = 'https://www.googleapis.com/auth/spreadsheets';
 const SCOPES = [
   'https://www.googleapis.com/auth/spreadsheets.readonly',
   'https://www.googleapis.com/auth/drive.readonly',
@@ -22,10 +25,13 @@ const MIME_PLANILHA = 'application/vnd.google-apps.spreadsheet';
 
 export class SemAcessoError extends Error {}
 export class TokenExpiradoError extends Error {}
+export class SemPermissaoEscritaError extends Error {}
 
 interface Token {
   access_token: string;
   expira: number;
+  /** permissões que o Google deu para esta chave */
+  escopos?: string;
 }
 
 export interface Usuario {
@@ -52,7 +58,7 @@ interface ArquivoDriveApi {
 // ---------- Script do Google Identity Services ----------
 
 interface TokenClient {
-  requestAccessToken(o?: { prompt?: string; login_hint?: string }): void;
+  requestAccessToken(o?: { prompt?: string; login_hint?: string; scope?: string }): void;
 }
 interface Gis {
   accounts: {
@@ -60,7 +66,7 @@ interface Gis {
       initTokenClient(c: {
         client_id: string;
         scope: string;
-        callback: (r: { access_token?: string; expires_in?: number; error?: string }) => void;
+        callback: (r: { access_token?: string; expires_in?: number; error?: string; scope?: string }) => void;
         error_callback?: (e: { type: string }) => void;
       }): TokenClient;
       revoke(token: string, done?: () => void): void;
@@ -121,18 +127,39 @@ export function prepararLogin() {
   if (CLIENT_ID) carregarGis().catch(() => {});
 }
 
-function pedirToken(gis: Gis, silencioso: boolean, dica?: string): Promise<string> {
+/** A chave atual pode gravar na planilha? */
+export function tokenPodeEscrever(): boolean {
+  return !!tokenAtual?.escopos?.split(' ').includes(ESCOPO_ESCRITA);
+}
+
+let escritaConcedida = false;
+/** Lembra que esta pessoa já deu permissão de escrita (para as renovações manterem). */
+export async function carregarPreferenciaEscrita() {
+  escritaConcedida = !!(await kvGet<boolean>('escrita'));
+}
+
+function pedirToken(gis: Gis, silencioso: boolean, dica?: string, comEscrita = false): Promise<string> {
+  const querEscrita = comEscrita || escritaConcedida;
+  const escopos = querEscrita ? `${SCOPES} ${ESCOPO_ESCRITA}` : SCOPES;
   return new Promise((resolve, reject) => {
     const client = gis.accounts.oauth2.initTokenClient({
       client_id: CLIENT_ID,
-      scope: SCOPES,
+      scope: escopos,
       callback: async (r) => {
         if (r.error || !r.access_token) {
           reject(new Error(r.error ?? 'Login cancelado'));
           return;
         }
-        tokenAtual = { access_token: r.access_token, expira: Date.now() + (r.expires_in ?? 3600) * 1000 };
+        tokenAtual = {
+          access_token: r.access_token,
+          expira: Date.now() + (r.expires_in ?? 3600) * 1000,
+          escopos: r.scope ?? escopos,
+        };
         await kvSet('token', tokenAtual);
+        if (tokenPodeEscrever() && !escritaConcedida) {
+          escritaConcedida = true;
+          await kvSet('escrita', true);
+        }
         resolve(r.access_token);
       },
       error_callback: (e) => reject(new Error(e.type === 'popup_closed' ? 'Login cancelado' : e.type)),
@@ -146,11 +173,11 @@ function pedirToken(gis: Gis, silencioso: boolean, dica?: string): Promise<strin
  * Abre o login do Google. Precisa ser chamado DIRETO dentro de um toque (sem esperar
  * nada antes), senão o Safari bloqueia a janela. `silencioso` = renovar sem mostrar nada.
  */
-export function entrar(silencioso = false, dica?: string): Promise<string> {
+export function entrar(silencioso = false, dica?: string, comEscrita = false): Promise<string> {
   if (!CLIENT_ID) return Promise.reject(new Error('Falta configurar o VITE_GOOGLE_CLIENT_ID.'));
   const g = (window as unknown as { google?: Gis }).google;
-  if (g?.accounts) return pedirToken(g, silencioso, dica);
-  return carregarGis().then((gis) => pedirToken(gis, silencioso, dica));
+  if (g?.accounts) return pedirToken(g, silencioso, dica, comEscrita);
+  return carregarGis().then((gis) => pedirToken(gis, silencioso, dica, comEscrita));
 }
 
 export async function sair() {
@@ -286,4 +313,53 @@ export async function baixarArquivo(token: string, id: string): Promise<Blob> {
   if (r.status === 401) throw new TokenExpiradoError('Token expirou');
   if (!r.ok) throw new Error(`Erro ${r.status} ao baixar`);
   return r.blob();
+}
+
+// ---------- Escrita na planilha (só a coluna status de um item) ----------
+
+/** A conta logada pode editar a planilha Roteiro? (quem só tem leitura não vê o botão) */
+export async function podeEditarPlanilha(token: string, planilhaId: string): Promise<boolean> {
+  try {
+    const r = await api<{ capabilities?: { canEdit?: boolean } }>(
+      `https://www.googleapis.com/drive/v3/files/${planilhaId}?fields=capabilities(canEdit)&supportsAllDrives=true`,
+      token,
+    );
+    return !!r.capabilities?.canEdit;
+  } catch {
+    return false;
+  }
+}
+
+function letraColuna(i: number): string {
+  let s = '';
+  for (let n = i + 1; n > 0; n = Math.floor((n - 1) / 26)) s = String.fromCharCode(65 + ((n - 1) % 26)) + s;
+  return s;
+}
+
+/**
+ * Grava o novo status de um item na aba Itens. Acha a linha pela coluna "id" na hora
+ * (as linhas podem ter mudado de lugar) e a coluna pelo nome "status". Não mexe em mais nada.
+ */
+export async function gravarStatusItem(token: string, planilhaId: string, itemId: string, status: string) {
+  const base = `https://sheets.googleapis.com/v4/spreadsheets/${planilhaId}/values`;
+  const cab = await api<{ values?: string[][] }>(`${base}/${encodeURIComponent('Itens!1:1')}`, token);
+  const cabecalho = (cab.values?.[0] ?? []).map((h) => String(h).trim().toLowerCase());
+  const colId = cabecalho.indexOf('id');
+  const colStatus = cabecalho.indexOf('status');
+  if (colId < 0 || colStatus < 0) throw new Error('A aba Itens não tem as colunas "id" e "status".');
+  const L = letraColuna(colId);
+  const ids = await api<{ values?: string[][] }>(`${base}/${encodeURIComponent(`Itens!${L}:${L}`)}`, token);
+  const linhas = (ids.values ?? []).map((r, i) => ({ id: String(r[0] ?? '').trim(), linha: i + 1 })).filter((r) => r.id === itemId);
+  if (linhas.length !== 1) {
+    throw new Error(linhas.length ? `O id ${itemId} aparece mais de uma vez na planilha.` : `O id ${itemId} não está mais na planilha.`);
+  }
+  const celula = `Itens!${letraColuna(colStatus)}${linhas[0].linha}`;
+  const r = await fetch(`${base}/${encodeURIComponent(celula)}?valueInputOption=RAW`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ range: celula, values: [[status]] }),
+  });
+  if (r.status === 401) throw new TokenExpiradoError('Token expirou');
+  if (r.status === 403) throw new SemPermissaoEscritaError('Esta conta não tem permissão para editar a planilha Roteiro.');
+  if (!r.ok) throw new Error(`Erro ${r.status} ao gravar na planilha`);
 }
