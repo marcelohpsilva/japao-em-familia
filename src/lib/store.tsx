@@ -15,6 +15,8 @@ import {
   carregarToken,
   carregarPreferenciaEscrita,
   gravarStatusItem,
+  gravarStatusAcao,
+  lerFinancas,
   podeEditarPlanilha,
   SemPermissaoEscritaError,
   tokenPodeEscrever,
@@ -27,6 +29,8 @@ import {
 } from './google';
 import exemplo from '../data/sample-roteiro.json';
 import { referenciasDoRoteiro, resolverComprovante, type Resolucao } from './comprovantes';
+import type { Financas } from './financas';
+import { agora } from './time';
 
 export type Sync = 'ocioso' | 'carregando' | 'precisa_login' | 'sem_acesso' | 'erro';
 
@@ -49,6 +53,12 @@ interface Estado {
   baixados: Set<string>;
   /** a conta logada pode editar a planilha (só então aparece "Concluir pendência") */
   podeEditar: boolean;
+  /** só existe para quem consegue abrir a Financas 2.0 */
+  financas: Financas | null;
+  /** datas (AAAA-MM-DD) em que o app foi aberto: para as conquistas */
+  aberturas: string[];
+  /** conquistas já ganhas: id → quando */
+  conquistas: Record<string, number>;
   feitos: Record<string, number>;
   ajustes: Ajustes;
   online: boolean;
@@ -67,6 +77,9 @@ interface Api extends Estado {
   procurarDeNovo(): Promise<void>;
   abrirArquivo(arq: ArquivoDrive): Promise<ResultadoComprovante>;
   concluirPendencia(itemId: string, novoStatus: StatusItem): Promise<{ ok: true } | { ok: false; motivo: string }>;
+  concluirAcao(numero: string): Promise<{ ok: true } | { ok: false; motivo: string }>;
+  registrarAbertura(datas: string[]): void;
+  ganharConquistas(ids: string[]): void;
   baixarTudo(progresso: (feitos: number, total: number) => void): Promise<void>;
   sairEApagar(): Promise<void>;
   setAjuste<K extends keyof Ajustes>(k: K, v: Ajustes[K]): void;
@@ -87,6 +100,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     arvore: [],
     baixados: new Set(),
     podeEditar: false,
+    financas: null,
+    aberturas: [],
+    conquistas: {},
     feitos: {},
     ajustes: AJUSTES_PADRAO,
     online: navigator.onLine,
@@ -111,6 +127,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         carregarPreferenciaEscrita(),
       ]);
       const podeEditar = !!(await kvGet<boolean>('podeEditar'));
+      const [financas, aberturas, conquistas] = await Promise.all([
+        kvGet<Financas>('financas'),
+        kvGet<string[]>('aberturas'),
+        kvGet<Record<string, number>>('conquistas'),
+      ]);
       const demoNaUrl = new URLSearchParams(location.search).has('demo');
       setE((s) => ({
         ...s,
@@ -124,6 +145,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         ajustes: { ...AJUSTES_PADRAO, ...ajustes },
         baixados: new Set(baixados),
         podeEditar,
+        financas: fonte === 'google' && !demoNaUrl ? (financas ?? null) : null,
+        aberturas: aberturas ?? [],
+        conquistas: conquistas ?? {},
       }));
     })();
     const on = () => patch({ online: true });
@@ -166,6 +190,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         kvSet('atualizadoEm', agoraMs),
       ]);
       patch({ roteiro, usuario, arvore, podeEditar, atualizadoEm: agoraMs, sync: 'ocioso', erro: undefined });
+      // Finanças: só aparece se esta conta abrir a Financas 2.0. Falhar aqui não atrapalha o resto.
+      try {
+        const financas = await lerFinancas(token, roteiro.viagem.embarque_data);
+        await kvSet('financas', financas);
+        patch({ financas });
+      } catch {
+        /* mantém a última leitura guardada */
+      }
     },
     [patch],
   );
@@ -291,7 +323,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       marcar(chave, feito) {
         setE((s) => {
           const feitos = { ...s.feitos };
-          if (feito) feitos[chave] = Date.now();
+          if (feito) feitos[chave] = agora();
           else delete feitos[chave];
           void kvSet('feitos', feitos);
           return { ...s, feitos };
@@ -387,6 +419,52 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             return { ok: false as const, motivo: err instanceof Error ? err.message : 'Erro ao gravar' };
           }
         })();
+      },
+      concluirAcao(numero) {
+        const s = estado.current;
+        if (!navigator.onLine) {
+          return Promise.resolve({ ok: false as const, motivo: 'Sem internet. Conclua quando tiver sinal: a Financas 2.0 precisa ser atualizada online.' });
+        }
+        const token = tokenAgora();
+        const pedido = token && tokenPodeEscrever() ? Promise.resolve(token) : entrar(false, s.usuario?.email, true);
+        return (async () => {
+          try {
+            const t = await pedido;
+            if (!tokenPodeEscrever()) {
+              return { ok: false as const, motivo: 'O Google não deu permissão para editar. Tente de novo e marque a opção de editar.' };
+            }
+            await gravarStatusAcao(t, numero, 'Feito');
+            setE((x) => {
+              if (!x.financas) return x;
+              const financas = { ...x.financas, acoes: x.financas.acoes.filter((a) => a.numero !== numero) };
+              void kvSet('financas', financas);
+              return { ...x, financas };
+            });
+            return { ok: true as const };
+          } catch (err) {
+            if (err instanceof TokenExpiradoError) esquecerToken();
+            return { ok: false as const, motivo: err instanceof Error ? err.message : 'Erro ao gravar' };
+          }
+        })();
+      },
+      registrarAbertura(datas) {
+        setE((x) => {
+          const novas = datas.filter((d) => !x.aberturas.includes(d));
+          if (!novas.length) return x;
+          const aberturas = [...x.aberturas, ...novas];
+          void kvSet('aberturas', aberturas);
+          return { ...x, aberturas };
+        });
+      },
+      ganharConquistas(ids) {
+        setE((x) => {
+          const novas = ids.filter((id) => !x.conquistas[id]);
+          if (!novas.length) return x;
+          const conquistas = { ...x.conquistas };
+          for (const id of novas) conquistas[id] = agora();
+          void kvSet('conquistas', conquistas);
+          return { ...x, conquistas };
+        });
       },
       async sairEApagar() {
         await sair();

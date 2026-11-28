@@ -3,14 +3,19 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Dia, Item } from './types';
 import { useStore } from './lib/store';
 import { useAgora, haQuanto } from './lib/hooks';
-import { simulando } from './lib/time';
+import { dateInTz, simulando, TZ_JAPAO } from './lib/time';
+import { conquistasGanhas, CONQUISTAS } from './lib/conquistas';
+import { soltarConfete } from './lib/fx';
+import type { Acao } from './lib/financas';
+import { AcaoSheet } from './components/Acoes';
+import { FinancasTela } from './components/FinancasTela';
 import { totalMoedas } from './lib/game';
 import { UiCtx, type Ui } from './lib/ui';
 import { Moeda, Musubi } from './components/Art';
 import { Comprovante, ItemSheet, StageIntro, Taxi } from './components/Overlays';
 import { Ajustes, Contatos, Entrada, etapaAtual, Hoje, Agenda, Pendencias, SemAcesso } from './components/Screens';
 
-type Aba = 'hoje' | 'agenda' | 'pendencias' | 'contatos' | 'ajustes';
+type Aba = 'hoje' | 'agenda' | 'pendencias' | 'contatos' | 'financas' | 'ajustes';
 
 interface MoedaVoando {
   id: number;
@@ -29,11 +34,15 @@ export default function App() {
   const [comprovante, setComprovante] = useState<string | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
   const [intro, setIntro] = useState<Dia | null>(null);
+  const [acao, setAcao] = useState<Acao | null>(null);
   const [voando, setVoando] = useState<MoedaVoando[]>([]);
   const placarRef = useRef<HTMLSpanElement>(null);
   const introMostrada = useRef(false);
 
   const reduzido = s.ajustes.animReduzidas;
+  useEffect(() => {
+    if (aba === 'financas' && !s.financas) setAba('hoje');
+  }, [aba, s.financas]);
 
   // Abertura de fase ao abrir o app durante a viagem.
   useEffect(() => {
@@ -69,6 +78,7 @@ export default function App() {
       abrirTaxi: setTaxi,
       abrirComprovante: setComprovante,
       aviso: setAviso,
+      abrirAcao: setAcao,
       irParaDia: (d) => {
         setDataEscolhida(d);
         setAba('hoje');
@@ -78,6 +88,25 @@ export default function App() {
   );
 
   const fecharIntro = useCallback(() => setIntro(null), []);
+
+  // Conquistas: registra em que dias o app foi aberto e confere o que foi ganho.
+  const { roteiro: rot, registrarAbertura, ganharConquistas, feitos, aberturas, conquistas: jaGanhas } = s;
+  const diaCasa = rot ? dateInTz(agoraMs, rot.viagem.embarque_fuso) : '';
+  const diaJapao = dateInTz(agoraMs, TZ_JAPAO);
+  useEffect(() => {
+    if (rot && s.pronto) registrarAbertura([`casa:${diaCasa}`, `jp:${diaJapao}`]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rot, diaCasa, diaJapao, s.pronto]);
+  const ganhasAgora = useMemo(() => (rot ? conquistasGanhas(rot, feitos, aberturas) : []), [rot, feitos, aberturas]);
+  useEffect(() => {
+    const novas = ganhasAgora.filter((id) => !jaGanhas[id]);
+    if (!novas.length || !s.pronto) return;
+    ganharConquistas(novas);
+    const c = CONQUISTAS.find((x) => x.id === novas[0])!;
+    setAviso(`🏅 Conquista: ${c.nome}${novas.length > 1 ? ` (+${novas.length - 1})` : ''}`);
+    soltarConfete(s.ajustes.animReduzidas);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ganhasAgora]);
   const moedas = s.roteiro ? totalMoedas(s.roteiro, s.feitos) : 0;
 
   if (!s.pronto) return <div className="carregando-tela"><Musubi pose="idle" /></div>;
@@ -133,6 +162,9 @@ export default function App() {
                 {aba === 'agenda' && <Agenda roteiro={roteiro} agoraMs={agoraMs} abrirDia={ui.irParaDia} />}
                 {aba === 'pendencias' && <Pendencias roteiro={roteiro} agoraMs={agoraMs} />}
                 {aba === 'contatos' && <Contatos roteiro={roteiro} />}
+                {aba === 'financas' && s.financas && (
+                  <FinancasTela roteiro={roteiro} hoje={diaJapao} durante={etapaAtual(roteiro, agoraMs).tipo === 'durante'} />
+                )}
                 {aba === 'ajustes' && <Ajustes />}
               </motion.div>
             </AnimatePresence>
@@ -145,6 +177,7 @@ export default function App() {
                 ['agenda', '🗓️', 'Agenda'],
                 ['pendencias', '📋', 'Pendências'],
                 ['contatos', '📞', 'Contatos'],
+                ...(s.financas ? ([['financas', '💴', 'Finanças']] as const) : []),
               ] as const
             ).map(([k, icone, nome]) => (
               <button
@@ -179,6 +212,7 @@ export default function App() {
           <ItemSheet item={item} onFechar={() => setItem(null)} />
           <Taxi alvo={taxi} onFechar={() => setTaxi(null)} />
           <Comprovante nomes={comprovante} onFechar={() => setComprovante(null)} />
+          <AcaoSheet acao={acao} hoje={diaCasa} onFechar={() => setAcao(null)} />
           <StageIntro dia={intro} onFim={fecharIntro} />
           <AnimatePresence>
             {aviso && (

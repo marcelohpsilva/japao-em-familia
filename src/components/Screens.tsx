@@ -3,6 +3,8 @@ import type { Roteiro } from '../types';
 import { useStore } from '../lib/store';
 import { useUi, STATUS_PENDENTE, TEXTO_PAGAR, TEXTO_STATUS, ienes, ICONE_TIPO, linkTelefone } from '../lib/ui';
 import { baixarIcs, itensComLembrete } from '../lib/ics';
+import { BlocoAcoes } from './Acoes';
+import { PainelConquistas } from './Conquistas';
 import { referenciasDoRoteiro } from '../lib/comprovantes';
 import { NOME_MUNDO, KANJI_MUNDO, NUMERO_MUNDO, resumoDoDia, totalMoedas, fusoDoItem, cartoesDoDia } from '../lib/game';
 import { dateInTz, formatDia, TZ_JAPAO, zonedToEpoch } from '../lib/time';
@@ -83,6 +85,7 @@ export function Hoje({ roteiro, agoraMs, dataEscolhida, setDataEscolhida, irPara
           <span className="previa-cta">Espiar o dia →</span>
         </button>
       )}
+      <ResumoAcoes hoje={dateInTz(agoraMs, roteiro.viagem.embarque_fuso)} irPara={() => irPara('pendencias')} />
       <section className="cartao-toy bloco">
         <h2 className="secao-titulo">Ainda falta resolver ({pend.length})</h2>
         {pend.length === 0 ? (
@@ -112,6 +115,32 @@ export function Hoje({ roteiro, agoraMs, dataEscolhida, setDataEscolhida, irPara
   );
 }
 
+/** Só para quem lê a Financas 2.0: quantas ações faltam e a próxima. */
+function ResumoAcoes({ hoje, irPara }: { hoje: string; irPara(): void }) {
+  const { financas } = useStore();
+  const ui = useUi();
+  if (!financas || !financas.acoes.length) return null;
+  const atrasadas = financas.acoes.filter((a) => a.prazoData && a.prazoData < hoje).length;
+  const proxima = financas.acoes[0];
+  return (
+    <section className="cartao-toy bloco bloco-acoes">
+      <h2 className="secao-titulo">
+        Ações Japão ({financas.acoes.length})
+        {atrasadas > 0 && <span className="selo selo-urgente" style={{ marginLeft: 6 }}>{atrasadas} atrasada{atrasadas > 1 ? 's' : ''}</span>}
+      </h2>
+      <ul className="lista-pend">
+        <li>
+          <button type="button" onClick={() => ui.abrirAcao(proxima)}>
+            <span className="pend-titulo">#{proxima.numero} · {proxima.acao}</span>
+            <span className="pend-meta">{proxima.prazo ? `prazo ${proxima.prazo}` : ''}</span>
+          </button>
+        </li>
+      </ul>
+      <button type="button" className="btn" onClick={irPara}>Ver todas as ações</button>
+    </section>
+  );
+}
+
 function FimDeJogo({ roteiro }: { roteiro: Roteiro }) {
   const { feitos } = useStore();
   const moedas = totalMoedas(roteiro, feitos);
@@ -119,6 +148,7 @@ function FimDeJogo({ roteiro }: { roteiro: Roteiro }) {
   const estrelasTot = fases.reduce((s, f) => s + f.estrelas, 0);
   const vencidos = fases.filter((f) => f.estrelas > 0).length;
   return (
+    <>
     <div className="fim cartao-toy">
       <Musubi pose="jump" size={120} />
       <h1>Fim de jogo!</h1>
@@ -128,8 +158,9 @@ function FimDeJogo({ roteiro }: { roteiro: Roteiro }) {
         <li>⭐ <b>{estrelasTot}</b> {estrelasTot === 1 ? 'estrela' : 'estrelas'}</li>
         <li>🗾 <b>{vencidos}</b> de {roteiro.dias.length} dias vencidos</li>
       </ul>
-      <p className="legenda">Ver as conquistas completas chega na v2.</p>
     </div>
+    <PainelConquistas />
+    </>
   );
 }
 
@@ -149,6 +180,7 @@ export function Agenda({ roteiro, agoraMs, abrirDia }: { roteiro: Roteiro; agora
   return (
     <div className="mapa" ref={ref}>
       <h1 className="tela-titulo">Agenda</h1>
+      <PainelConquistas />
       <ol className="trilha">
         {roteiro.dias.map((d) => {
           const r = resumoDoDia(roteiro, d, feitos);
@@ -190,7 +222,9 @@ export function Pendencias({ roteiro, agoraMs }: { roteiro: Roteiro; agoraMs: nu
   return (
     <div className="pendencias">
       <h1 className="tela-titulo">Pendências</h1>
+      <BlocoAcoes hoje={dateInTz(agoraMs, roteiro.viagem.embarque_fuso)} onAbrir={ui.abrirAcao} />
       <BlocoLembretes roteiro={roteiro} />
+      {pend.length > 0 && <h2 className="secao-titulo" style={{ margin: '4px 4px 10px' }}>Do roteiro</h2>}
       {pend.length === 0 && (
         <div className="vazio">
           <Musubi pose="jump" />

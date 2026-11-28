@@ -55,6 +55,14 @@ Na primeira entrada, cada pessoa vê uma vez o aviso "O Google não verificou es
    nome `GOOGLE_CLIENT_ID`, valor = o Client ID.
 4. Cada push na `main` publica em `https://SEU-USUARIO.github.io/japao-em-familia/`.
 
+## Finanças e Ações Japão (só para quem abre a Financas 2.0)
+
+A aba **Finanças** e o bloco **Ações Japão** aparecem só para a conta que consegue abrir a planilha
+`Financas 2.0` (achada pelo nome exato). O app lê apenas: a linha `Japão 2026` da aba Projetos, a aba
+`Japão 2026`, a aba `Ações Japão`, as colunas Data/Descrição/Valor/Natureza/Projeto de Lancamentos e o
+câmbio (intervalo nomeado `CAMBIO_JPY_CAD`, se existir; senão só `Parametros!A14:B14`, conferindo o rótulo).
+A aba Parametros nunca é lida inteira. Marcar uma ação como feita grava só a coluna `Status` daquela linha.
+
 ## Preparar o Drive
 
 Veja as seções 3 e 10 do escopo: pasta `Viagem-Japao` com a planilha `Roteiro` e a subpasta

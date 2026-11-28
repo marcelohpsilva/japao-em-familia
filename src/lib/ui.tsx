@@ -1,6 +1,7 @@
 // Folhas e telas por cima: detalhe do item, mostrar ao taxista, comprovante, aviso.
 import { createContext, useContext } from 'react';
 import type { Item } from '../types';
+import type { Acao } from './financas';
 
 export interface Ui {
   abrirItem(item: Item): void;
@@ -8,6 +9,7 @@ export interface Ui {
   abrirComprovante(nomes: string): void;
   aviso(texto: string): void;
   irParaDia(data: string): void;
+  abrirAcao(acao: Acao): void;
 }
 
 export const UiCtx = createContext<Ui | null>(null);

@@ -46,6 +46,7 @@ export interface IdsDrive {
 }
 
 import type { ArquivoDrive } from './comprovantes';
+import { lerAcoes, lerAPagar, lerCambio, lerCategorias, lerLancamentos, lerProjeto, type Financas } from './financas';
 export type { ArquivoDrive };
 
 interface ArquivoDriveApi {
@@ -337,29 +338,136 @@ function letraColuna(i: number): string {
 }
 
 /**
- * Grava o novo status de um item na aba Itens. Acha a linha pela coluna "id" na hora
- * (as linhas podem ter mudado de lugar) e a coluna pelo nome "status". Não mexe em mais nada.
+ * Grava UMA célula: na aba indicada, acha a linha de cabeçalho (nas 15 primeiras linhas)
+ * que tem as colunas `chave` e `coluna`, acha a linha cujo valor em `chave` é `valorChave`
+ * e grava `valor` na coluna `coluna`. Tudo pelo texto, nada por posição fixa.
  */
-export async function gravarStatusItem(token: string, planilhaId: string, itemId: string, status: string) {
+export async function gravarPorChave(o: {
+  token: string;
+  planilhaId: string;
+  aba: string;
+  chave: string;
+  valorChave: string;
+  coluna: string;
+  valor: string;
+}) {
+  const { token, planilhaId, aba, chave, valorChave, coluna, valor } = o;
   const base = `https://sheets.googleapis.com/v4/spreadsheets/${planilhaId}/values`;
-  const cab = await api<{ values?: string[][] }>(`${base}/${encodeURIComponent('Itens!1:1')}`, token);
-  const cabecalho = (cab.values?.[0] ?? []).map((h) => String(h).trim().toLowerCase());
-  const colId = cabecalho.indexOf('id');
-  const colStatus = cabecalho.indexOf('status');
-  if (colId < 0 || colStatus < 0) throw new Error('A aba Itens não tem as colunas "id" e "status".');
-  const L = letraColuna(colId);
-  const ids = await api<{ values?: string[][] }>(`${base}/${encodeURIComponent(`Itens!${L}:${L}`)}`, token);
-  const linhas = (ids.values ?? []).map((r, i) => ({ id: String(r[0] ?? '').trim(), linha: i + 1 })).filter((r) => r.id === itemId);
-  if (linhas.length !== 1) {
-    throw new Error(linhas.length ? `O id ${itemId} aparece mais de uma vez na planilha.` : `O id ${itemId} não está mais na planilha.`);
+  const faixa = (a1: string) => encodeURIComponent(`'${aba.replace(/'/g, "''")}'!${a1}`);
+  const topo = await api<{ values?: string[][] }>(`${base}/${faixa('1:15')}`, token);
+  const norm = (v: unknown) => String(v ?? '').trim().toLowerCase();
+  let linhaCab = -1;
+  let colChave = -1;
+  let colAlvo = -1;
+  (topo.values ?? []).forEach((l, i) => {
+    const h = l.map(norm);
+    if (linhaCab < 0 && h.includes(norm(chave)) && h.includes(norm(coluna))) {
+      linhaCab = i;
+      colChave = h.indexOf(norm(chave));
+      colAlvo = h.indexOf(norm(coluna));
+    }
+  });
+  if (linhaCab < 0) throw new Error(`A aba ${aba} não tem as colunas "${chave}" e "${coluna}".`);
+  const L = letraColuna(colChave);
+  const col = await api<{ values?: string[][] }>(`${base}/${faixa(`${L}:${L}`)}`, token);
+  const achadas = (col.values ?? [])
+    .map((r, i) => ({ v: String(r[0] ?? '').trim(), linha: i + 1 }))
+    .filter((r) => r.linha > linhaCab + 1 && r.v === valorChave);
+  if (achadas.length !== 1) {
+    throw new Error(achadas.length ? `"${valorChave}" aparece mais de uma vez em ${aba}.` : `"${valorChave}" não está mais em ${aba}.`);
   }
-  const celula = `Itens!${letraColuna(colStatus)}${linhas[0].linha}`;
-  const r = await fetch(`${base}/${encodeURIComponent(celula)}?valueInputOption=RAW`, {
+  const celula = `'${aba.replace(/'/g, "''")}'!${letraColuna(colAlvo)}${achadas[0].linha}`;
+  const r = await fetch(`${base}/${encodeURIComponent(celula)}?valueInputOption=USER_ENTERED`, {
     method: 'PUT',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ range: celula, values: [[status]] }),
+    body: JSON.stringify({ range: celula, values: [[valor]] }),
   });
   if (r.status === 401) throw new TokenExpiradoError('Token expirou');
-  if (r.status === 403) throw new SemPermissaoEscritaError('Esta conta não tem permissão para editar a planilha Roteiro.');
+  if (r.status === 403) throw new SemPermissaoEscritaError('Esta conta não tem permissão para editar esta planilha.');
   if (!r.ok) throw new Error(`Erro ${r.status} ao gravar na planilha`);
+}
+
+/** Roteiro: muda só a coluna "status" do item com aquele id (aba Itens). */
+export function gravarStatusItem(token: string, planilhaId: string, itemId: string, status: string) {
+  return gravarPorChave({ token, planilhaId, aba: 'Itens', chave: 'id', valorChave: itemId, coluna: 'status', valor: status });
+}
+
+// ---------- Financas 2.0 (só leitura dos intervalos do escopo; escrita só do Status de uma ação) ----------
+
+export const NOME_FINANCAS = 'Financas 2.0';
+
+type Celula = string | number | boolean;
+
+async function lerFaixas(token: string, id: string, faixas: string[]): Promise<Celula[][][]> {
+  const params = new URLSearchParams({ valueRenderOption: 'UNFORMATTED_VALUE', dateTimeRenderOption: 'SERIAL_NUMBER' });
+  for (const f of faixas) params.append('ranges', f);
+  const r = await api<{ valueRanges: { values?: Celula[][] }[] }>(
+    `https://sheets.googleapis.com/v4/spreadsheets/${id}/values:batchGet?${params}`,
+    token,
+  );
+  return r.valueRanges.map((v) => v.values ?? []);
+}
+
+/** Acha a planilha "Financas 2.0" pelo nome exato (backups têm outro nome). Sem acesso → null. */
+export async function acharFinancas(token: string): Promise<string | null> {
+  const salvo = await kvGet<string>('idFinancas');
+  if (salvo) return salvo;
+  try {
+    const id = await buscarPorNome(token, NOME_FINANCAS, MIME_PLANILHA);
+    if (id) await kvSet('idFinancas', id);
+    return id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function lerFinancas(token: string, embarque: string): Promise<Financas | null> {
+  const id = await acharFinancas(token);
+  if (!id) return null;
+  try {
+    const [projetos, japao, acoes, data, descricao, valor, natureza, projeto] = await lerFaixas(token, id, [
+      'Projetos!A1:L60',
+      "'Japão 2026'!A1:N80",
+      "'Ações Japão'!A1:J300",
+      'Lancamentos!B:B',
+      'Lancamentos!F:F',
+      'Lancamentos!G:G',
+      'Lancamentos!H:H',
+      'Lancamentos!L:L',
+    ]);
+    // Câmbio: intervalo nomeado, se existir; senão só Parametros!A14:B14 (nunca a aba inteira).
+    let cambioLinha: Celula[] | undefined;
+    try {
+      cambioLinha = (await lerFaixas(token, id, ['CAMBIO_JPY_CAD']))[0]?.[0];
+    } catch {
+      cambioLinha = (await lerFaixas(token, id, ['Parametros!A14:B14']))[0]?.[0];
+    }
+    const proj = lerProjeto(projetos);
+    const { categorias, total } = lerCategorias(japao);
+    const base = proj ?? (total ? { orcado: total.orcado, gasto: total.realizado, saldo: total.saldo } : null);
+    if (!base) return null;
+    const col = (c: Celula[][]) => c.map((l) => l[0]);
+    return {
+      ...base,
+      categorias,
+      aPagar: lerAPagar(japao),
+      acoes: lerAcoes(acoes, embarque),
+      lancamentos: lerLancamentos({ data: col(data), descricao: col(descricao), valor: col(valor), natureza: col(natureza), projeto: col(projeto) }),
+      cambio: lerCambio(cambioLinha),
+      lidoEm: Date.now(),
+    };
+  } catch (err) {
+    if (err instanceof SemAcessoError) {
+      await kvSet('idFinancas', null);
+      return null;
+    }
+    throw err;
+  }
+}
+
+/** Marca uma ação da aba "Ações Japão" com o status pedido (coluna Status), achando a linha pelo Nº. */
+export async function gravarStatusAcao(token: string, numero: string, status: string) {
+  const id = await acharFinancas(token);
+  if (!id) throw new Error('Planilha Financas 2.0 não encontrada.');
+  return gravarPorChave({ token, planilhaId: id, aba: 'Ações Japão', chave: 'Nº', valorChave: numero, coluna: 'Status', valor: status });
 }
